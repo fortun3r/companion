@@ -97,6 +97,15 @@ Every question and answer is saved as it happens to `~/.claude/meetings/<date>-<
 
 "I committed to" lists only follow-ups you actually said out loud in the transcripts, not things the companion suggested you say. Press Ctrl+C while the summary is being written to skip it.
 
+New Claude Code sessions don't know about these notes on their own. To make every session aware of them, add this to your global `~/.claude/CLAUDE.md`:
+
+```markdown
+# Meeting notes
+Meeting notes from the companion live in `~/.claude/meetings/` (one file per meeting, named `<date>-<time>-<scope>.md`, with a summary of topics, commitments and open questions above the first `---`). Check them when I ask about a meeting, what I promised, or what someone asked about a ticket.
+```
+
+Then questions like "what did I promise in Monday's meeting?" work in any session. Claude only opens the notes when the question calls for them, so it costs nothing otherwise.
+
 ### Jira
 
 Your local history can't answer questions about tickets you haven't started. Connect Jira to fill that gap.
