@@ -15,11 +15,12 @@ git history, Claude Code transcripts, claude-mem (if installed) and any brief in
   ? text       ask a typed question instead
   q            quit
 
-Scope args narrow where it looks (default: current directory). Each is a path, or
-a folder name under $COMPANION_ROOT (default ~/dev), up to two levels deep:
-  companion.py my-app
-  companion.py ~/work
-  companion.py api web
+Scope args set where it looks (default: current directory), including every repo
+nested inside. Each is a path, or a folder name under $COMPANION_ROOT (default ~/dev):
+  companion .
+  companion my-app
+  companion ~/work
+  companion api web
 """
 
 import collections
@@ -97,10 +98,20 @@ def worktrees(repo):
     return [p for p in paths if p.is_dir() and not p.is_relative_to(repo)]
 
 
+def find_repos(folder):
+    repos = []
+    for root, dirs, files in os.walk(folder):
+        if ".git" in dirs or ".git" in files:
+            repos.append(Path(root))
+            dirs.clear()  # don't descend into a repo; its worktrees come from `git worktree list`
+        else:
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d != "node_modules"]
+    return repos
+
+
 def scope_context(folders):
     """Map scope folders to their repos, worktrees, transcript dirs and claude-mem projects."""
-    repos = [f for f in folders if (f / ".git").exists()]
-    repos += [g.parent for f in folders if not (f / ".git").exists() for g in [*f.glob("*/.git"), *f.glob("*/*/.git")]]
+    repos = [r for f in folders for r in find_repos(f)]
     trees = [w for r in repos for w in worktrees(r)]
 
     # Claude Code names transcript dirs after the session cwd, with / and . replaced by -

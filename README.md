@@ -31,8 +31,10 @@ It moves invoice sync to a queue so retries don't block the nightly run.
 
 ```bash
 git clone https://github.com/fortun3r/companion.git
+ln -s "$PWD/companion/companion.py" ~/.local/bin/companion   # any directory on your PATH
+
 cd your-project
-/path/to/companion/companion.py
+companion .
 ```
 
 The first run downloads the whisper model (~1.6 GB), and macOS asks for microphone access for your terminal app.
@@ -48,17 +50,18 @@ Follow-up questions keep the context from earlier ones.
 
 ### Scope
 
-By default it only looks at the current directory. Pass folders to narrow or widen that:
+It looks at the folders you pass, and everything inside them. With no arguments it uses the current directory.
 
 ```bash
-companion.py my-app                 # one repo, by name under ~/dev
-companion.py ~/work                 # every repo under a folder (two levels deep)
-companion.py api web                # several repos
+companion .                         # this folder and every repo nested inside it
+companion my-app                    # one repo, by name under ~/dev
+companion ~/work                    # every repo under a folder
+companion api web                   # several repos
 ```
 
 A scope expands to:
 
-- the repos it covers,
+- every repo inside it, at any depth (hidden folders and `node_modules` are skipped),
 - their git worktrees,
 - the Claude Code transcripts recorded in any of those folders,
 - the matching claude-mem projects, if claude-mem is installed.
