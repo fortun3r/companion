@@ -38,7 +38,14 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+WHISPER = os.environ.get("COMPANION_WHISPER", "mlx-community/whisper-large-v3-turbo")
+
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+# Once the model is cached, skip the Hub's update check (and its unauthenticated-request warning).
+# Must be set before huggingface_hub is imported.
+_hf_cache = Path(os.environ.get("HF_HUB_CACHE") or Path(os.environ.get("HF_HOME", Path.home() / ".cache/huggingface")) / "hub")
+if (_hf_cache / f"models--{WHISPER.replace('/', '--')}" / "snapshots").is_dir():
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
 import mlx_whisper
 import numpy as np
 import sounddevice as sd
@@ -48,7 +55,6 @@ BLOCK = RATE // 10
 BUFFER_SECONDS = 120
 WINDOW = int(os.environ.get("COMPANION_WINDOW", 20))
 MODEL = os.environ.get("COMPANION_MODEL", "sonnet")
-WHISPER = os.environ.get("COMPANION_WHISPER", "mlx-community/whisper-large-v3-turbo")
 HOME = Path.home()
 ROOT = Path(os.environ.get("COMPANION_ROOT", HOME / "dev")).expanduser()
 CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", HOME / ".claude")).expanduser()
