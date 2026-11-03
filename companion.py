@@ -23,6 +23,7 @@ nested inside. Each is a path, or a folder name under $COMPANION_ROOT (default ~
   companion api web
 """
 
+import base64
 import collections
 import json
 import os
@@ -30,6 +31,9 @@ import re
 import sqlite3
 import subprocess
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from pathlib import Path
 
@@ -49,6 +53,9 @@ ROOT = Path(os.environ.get("COMPANION_ROOT", HOME / "dev")).expanduser()
 CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", HOME / ".claude")).expanduser()
 MEM_DB = Path(os.environ.get("CLAUDE_MEM_DB", HOME / ".claude-mem/claude-mem.db")).expanduser()
 HERE = Path(__file__).resolve().parent
+JIRA_URL = os.environ.get("JIRA_URL", "").rstrip("/")
+JIRA_JQL = os.environ.get("COMPANION_JIRA_JQL", "sprint in openSprints() AND statusCategory != Done ORDER BY updated DESC")
+JIRA_AUTH = base64.b64encode(f"{os.environ.get('JIRA_EMAIL')}:{os.environ.get('JIRA_API_TOKEN')}".encode()).decode()
 
 DIM, BOLD, RESET = "\033[2m", "\033[1m", "\033[0m"
 
@@ -72,6 +79,8 @@ if MEM_DB.exists():
 4. claude-mem: `sqlite3 -readonly {MEM_DB}` with tables session_summaries(project, request, completed, learned, next_steps, created_at, created_at_epoch ms) and observations(project, type, title, narrative, created_at_epoch). project is the session folder name, often a ticket or worktree name. Skip transcripts under *observer-sessions*, which are claude-mem's own."""
 
 SYSTEM += """
+
+Jira tickets mentioned in the transcript are attached below it when found. If a ticket has no local work (no commits, branches or sessions for it), say plainly that I haven't started it, then give what it asks, the open questions, and a likely approach based on how similar work was done in my repos.
 
 I'm reading this mid-conversation, so be fast: at most ~4 tool calls, and answer from the brief when it suffices.
 
@@ -142,6 +151,85 @@ def latest_brief():
     return f"\n\nLatest brief ({briefs[-1].name}):\n{briefs[-1].read_text()}" if briefs else ""
 
 
+def jira_get(path):
+    request = urllib.request.Request(f"{JIRA_URL}/rest/api/2/{path}", headers={
+        "Authorization": f"Basic {JIRA_AUTH}", "Accept": "application/json"})
+    with urllib.request.urlopen(request, timeout=5) as response:
+        return json.load(response)
+
+
+def jira_key_pattern():
+    """Match only real project keys, loosely, since whisper writes SA-3424 as "SA 3424" or "sa3424"."""
+    if not (JIRA_URL and os.environ.get("JIRA_API_TOKEN")):
+        return None
+    try:
+        keys = [p["key"] for p in jira_get("project")]
+    except (urllib.error.URLError, TimeoutError) as e:
+        print(f"jira disabled: {e}")
+        return None
+    print(f"{DIM}jira: {len(keys)} projects{RESET}")
+    return re.compile(rf"\b({'|'.join(map(re.escape, keys))})[\s-]?(\d+)\b", re.I) if keys else None
+
+
+def jira_index():
+    """One line per open sprint ticket, so a ticket described without its key can still be identified."""
+    query = urllib.parse.urlencode({"jql": JIRA_JQL, "fields": "summary,status,assignee", "maxResults": 100})
+    for endpoint in ("search/jql", "search"):  # Jira Cloud, then Server/DC
+        try:
+            issues = jira_get(f"{endpoint}?{query}")["issues"]
+            break
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                print(f"jira index skipped: HTTP {e.code}")
+                return ""
+        except (urllib.error.URLError, TimeoutError) as e:
+            print(f"jira index skipped: {e}")
+            return ""
+    else:
+        print("jira index skipped: no search endpoint")
+        return ""
+    print(f"{DIM}jira: {len(issues)} open sprint tickets indexed{RESET}")
+    lines = [
+        f"- {i['key']}: {i['fields']['summary']} [{i['fields']['status']['name']}, "
+        f"{(i['fields']['assignee'] or {}).get('displayName', 'unassigned')}]"
+        for i in issues
+    ]
+    return "\n\nOpen sprint tickets (key: summary [status, assignee]). If the transcript describes one of these without its key, use this to identify it:\n" + "\n".join(lines) if lines else ""
+
+
+def jira_ticket(key):
+    fields = "summary,status,issuetype,priority,assignee,reporter,description,comment,issuelinks,parent,labels"
+    try:
+        f = jira_get(f"issue/{key}?fields={fields}")["fields"]
+    except urllib.error.HTTPError as e:
+        print(f"{DIM}jira: {key} {'not found' if e.code == 404 else f'HTTP {e.code}'}{RESET}")
+        return None
+    except (urllib.error.URLError, TimeoutError) as e:
+        print(f"{DIM}jira: {key} failed: {e}{RESET}")
+        return None
+
+    name = lambda person: person["displayName"] if person else "unassigned"
+    links = [
+        f"{kind} {other['key']} ({other['fields']['summary']})"
+        for link in f["issuelinks"]
+        for kind, other in [(link["type"]["outward"], link.get("outwardIssue")), (link["type"]["inward"], link.get("inwardIssue"))]
+        if other
+    ]
+    comments = [
+        f"- {c['author']['displayName']} ({c['created'][:10]}): {c['body'][:500]}"
+        for c in f["comment"]["comments"][-3:]
+    ]
+    parent = f"{f['parent']['key']} ({f['parent']['fields']['summary']})" if f.get("parent") else "none"
+    return f"""{key} [{f['issuetype']['name']}] {f['summary']}
+Status: {f['status']['name']} · Assignee: {name(f['assignee'])} · Reporter: {name(f['reporter'])} · Priority: {(f.get('priority') or {}).get('name', 'none')}
+Parent: {parent} · Labels: {", ".join(f['labels']) or "none"}
+Links: {"; ".join(links) or "none"}
+Description:
+{(f['description'] or "(empty)")[:4000]}
+Latest comments:
+{chr(10).join(comments) or "none"}"""
+
+
 def transcribe(audio):
     result = mlx_whisper.transcribe(audio, path_or_hf_repo=WHISPER, condition_on_previous_text=False)
     return result["text"].strip()
@@ -191,6 +279,11 @@ def main():
     def on_audio(indata, frames, time, status):
         blocks.append(indata[:, 0].copy())
 
+    jira_keys = jira_key_pattern()
+    if jira_keys:
+        scope_text += jira_index()
+    attached = set()  # tickets already in the Claude session; follow-ups resume it
+
     print(f"{DIM}loading whisper…{RESET}")
     transcribe(np.zeros(RATE, dtype=np.float32))
 
@@ -217,6 +310,14 @@ def main():
                 text = transcribe(audio)
                 print(f"{DIM}heard: {text}{RESET}\n")
                 prompt = f"Transcript of the last {seconds}s:\n{text}"
+
+            if jira_keys:
+                keys = {f"{m[1].upper()}-{m[2]}" for m in jira_keys.finditer(prompt)} - attached
+                tickets = [t for key in sorted(keys) if (t := jira_ticket(key))]
+                attached |= keys
+                if tickets:
+                    print(f"{DIM}[jira {', '.join(sorted(keys))}]{RESET}")
+                    prompt += "\n\nJira tickets mentioned:\n\n" + "\n\n".join(tickets)
 
             ask(prompt, session_id, first, scope_text, dirs)
             first = False

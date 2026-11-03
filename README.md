@@ -26,6 +26,7 @@ It moves invoice sync to a queue so retries don't block the nightly run.
 - [Claude Code](https://docs.claude.com/en/docs/claude-code), logged in (`claude` on your PATH). Answers use your existing Claude subscription or API key.
 - Optional: [`gh`](https://cli.github.com/), logged in, for PR lookups
 - Optional: [claude-mem](https://github.com/thedotmack/claude-mem), whose session summaries are the best source for *why* something was done
+- Optional: a Jira API token, for tickets you haven't touched locally yet
 
 ## Usage
 
@@ -72,6 +73,22 @@ Claude can only open files inside the scope.
 
 The newest markdown file in `~/.claude/briefs/` is included in every request. Write a short "what I did this week and why" there before a meeting (or have Claude Code write it). Answers get faster and better, because Claude needs fewer searches.
 
+### Jira
+
+Your local history can't answer questions about tickets you haven't started. Set three env vars to fill that gap:
+
+```bash
+export JIRA_URL=https://your-team.atlassian.net
+export JIRA_EMAIL=you@company.com
+export JIRA_API_TOKEN=$(security find-generic-password -s jira-api-token -w)  # token from id.atlassian.com, kept in the keychain
+```
+
+With these set:
+
+- **Spoken keys:** when a ticket key is said ("SA 3424" and "sa3424" both count), the ticket is fetched directly from Jira and attached to the question. That covers summary, status, assignee, description, links and the latest comments, and takes about 0.5s with no extra tool calls. Only keys of your real Jira projects are matched.
+- **Described tickets:** at startup it indexes every open ticket in the current sprint, one line each. So "the invoice export thing" still resolves to the right ticket, even when nobody says the key and it isn't yours. Change what gets indexed with `COMPANION_JIRA_JQL`.
+- **Not started yet:** if a ticket has no local work, the answer says so plainly, then covers what the ticket asks, the open questions, and a likely approach based on similar work in your repos.
+
 ### Configuration
 
 | Env var | Default | |
@@ -82,6 +99,8 @@ The newest markdown file in `~/.claude/briefs/` is included in every request. Wr
 | `COMPANION_WHISPER` | `mlx-community/whisper-large-v3-turbo` | any mlx-whisper model |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | where Claude Code keeps transcripts |
 | `CLAUDE_MEM_DB` | `~/.claude-mem/claude-mem.db` | claude-mem database |
+| `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` | unset | enable Jira lookups |
+| `COMPANION_JIRA_JQL` | `sprint in openSprints() AND statusCategory != Done ORDER BY updated DESC` | tickets indexed at startup (max 100) |
 
 ## How it works
 
@@ -92,7 +111,7 @@ The newest markdown file in `~/.claude/briefs/` is included in every request. Wr
 
 ## Privacy and etiquette
 
-- Audio never leaves your machine. The **transcript text** is sent to Claude, the same as anything you type into Claude Code.
+- Audio never leaves your machine. The **transcript text** is sent to Claude, the same as anything you type into Claude Code, along with any Jira tickets it fetched.
 - It transcribes everyone in the room. Recording or transcribing people without their consent is illegal in some places, and your employer may have its own rules. Check before using it.
 - It doesn't tell speakers apart. Claude infers which question was aimed at you, and sometimes gets it wrong.
 - Answers come from your history, but they can still be wrong. Check the refs before repeating something important.
