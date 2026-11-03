@@ -32,9 +32,11 @@ import queue
 import threading
 import os
 import re
+import shutil
 import sqlite3
 import subprocess
 import sys
+import textwrap
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -388,7 +390,7 @@ def ask(prompt, session_id, first, scope_text, dirs):
     ]
     cmd += ["--session-id", session_id] if first else ["--resume", session_id]
 
-    answer = []
+    answer, printer = [], AnswerPrinter()
     proc = subprocess.Popen(cmd, cwd=HERE, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True)
     for line in proc.stdout:
         msg = json.loads(line)
@@ -398,13 +400,70 @@ def ask(prompt, session_id, first, scope_text, dirs):
             continue
         event = msg["event"]
         if event["type"] == "content_block_start" and event["content_block"]["type"] == "tool_use":
-            print(f"{DIM}[{event['content_block']['name']}…]{RESET}", flush=True)
+            printer.tool(event["content_block"]["name"])
         elif event["type"] == "content_block_delta" and event["delta"]["type"] == "text_delta":
-            print(event["delta"]["text"], end="", flush=True)
+            printer.text(event["delta"]["text"])
             answer.append(event["delta"]["text"])
     proc.wait()
-    print()
+    printer.finish()
     return "".join(answer).strip()
+
+
+class AnswerPrinter:
+    """Formats the streamed answer a line at a time: bold headline, wrapped bullets, colored code, dim refs."""
+
+    CODE, CODE_END = "\033[36m", "\033[39m"  # color only, so it doesn't end the bold of a headline
+
+    def __init__(self):
+        self.buffer, self.searching, self.headline_done = "", False, False
+        self.width = min(shutil.get_terminal_size().columns, 100) - 2
+
+    def tool(self, name):
+        print(f"{DIM}  searching" if not self.searching else f"{DIM}", end="")
+        print(f" · {name}{RESET}", end="", flush=True)
+        self.searching = True
+
+    def text(self, delta):
+        if self.searching:
+            print("\n")
+            self.searching = False
+        self.buffer += delta
+        while "\n" in self.buffer:
+            line, self.buffer = self.buffer.split("\n", 1)
+            self.line(line)
+
+    def finish(self):
+        if self.buffer.strip():
+            self.line(self.buffer)
+        self.buffer = ""
+        print()
+
+    def line(self, line):
+        text = line.strip().replace("**", "")
+        if not text:
+            print()
+            return
+        if text.startswith("#"):
+            print(f"{BOLD}{text.lstrip('# ')}{RESET}")
+            return
+        if re.fullmatch(r"\[.*\]", text):
+            print(f"{DIM}  {text[1:-1]}{RESET}")
+            return
+
+        style, first, rest = "", "", ""
+        if text[:2] in ("- ", "* ", "• "):
+            text, first, rest = text[2:], "  • ", "    "
+        elif not self.headline_done:
+            style = BOLD
+        self.headline_done = True
+
+        # NBSP keeps code spans from being split across lines; textwrap only breaks on ASCII spaces
+        text = re.sub(r"`[^`]+`", lambda m: m[0].replace(" ", " "), text)
+        wrapped = textwrap.fill(text, self.width, initial_indent=first, subsequent_indent=rest,
+                                break_long_words=False, break_on_hyphens=False).replace(" ", " ")
+        wrapped = re.sub(r"^(  • )([^:`\n]{1,30}):", rf"\1{BOLD}\2:{RESET}", wrapped)  # "Gate: ..." labels
+        wrapped = re.sub(r"`([^`]+)`", rf"{self.CODE}\1{self.CODE_END}", wrapped)
+        print(f"{style}{wrapped}{RESET if style else ''}", flush=True)
 
 
 def log_exchange(notes, title, question, answer):
