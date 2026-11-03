@@ -83,6 +83,8 @@ if MEM_DB.exists():
 
 SYSTEM += """
 
+The code itself is the ground truth for how things work. For "how does X work", "does it do Y" or "what happens when Z" questions, Grep the repos in scope first and read only the matching lines, then cite `file:line`. History explains why. The code shows what's true now. Each folder is on whatever branch is checked out. For unmerged work, look in the ticket's worktree, or use `git -C <repo> show <branch>:<path>`. Before describing how code works, check whether one of my open PRs or worktrees changes it (`git -C <repo> log --all -i --author=<my email> -- <file>`). If one does, say what the main branch does today and what my pending change does.
+
 Jira tickets mentioned in the transcript are attached below it when found. If a ticket has no local work (no commits, branches or sessions for it), say plainly that I haven't started it, then give what it asks, the open questions, and a likely approach based on how similar work was done in my repos.
 
 I'm reading this mid-conversation, so be fast: at most ~4 tool calls, and answer from the brief when it suffices.
@@ -90,7 +92,7 @@ I'm reading this mid-conversation, so be fast: at most ~4 tool calls, and answer
 Format, in the language of the question:
 - First line: the answer as I'd say it out loud, max 25 words.
 - Then up to 4 short bullets with supporting detail (why, tradeoffs, status).
-- Last line: refs (ticket, PR, commit sha) in brackets.
+- Last line: refs (ticket, PR, commit sha, file:line) in brackets.
 If you can't find it, say so in one line and suggest what I can say instead. Never invent details."""
 
 SUMMARY_PROMPT = """The meeting is over. Write my notes for it as markdown, with no preamble and no other text:

@@ -2,7 +2,7 @@
 
 Instant recall of your own engineering history, during meetings.
 
-When you ship across many repos and tickets, the specifics blur: which PR, which commit, which tradeoff came up in review. When a question comes up, press Enter. The companion transcribes the last few seconds locally and pulls the exact details from your git history, PRs and Claude Code sessions. You get the answer in one line, a few supporting facts, and the commits and PRs behind it, without breaking the conversation to go digging.
+When you ship across many repos and tickets, the specifics blur: which PR, which commit, which tradeoff came up in review. When a question comes up, press Enter. The companion transcribes the last few seconds locally and pulls the exact details from your code, git history, PRs, Claude Code sessions and Jira. You get the answer in one line, a few supporting facts, and the commits, PRs and files behind it, without breaking the conversation to go digging.
 
 ```
 > 
@@ -161,7 +161,7 @@ With Jira connected:
 
 1. A rolling 2-minute buffer of mic audio is kept in memory. Audio is never written to disk.
 2. On Enter, the chosen window is transcribed locally with whisper (about 3s on an M-series Mac).
-3. The transcript goes to `claude -p` with a system prompt describing your scope. Claude gets read-only tools: `git log/show`, `gh pr view/list`, grep, and read-only sqlite. User settings, plugins, hooks and MCP servers are skipped so each answer starts fast.
+3. The transcript goes to `claude -p` with a system prompt describing your scope. Claude gets read-only tools: file read/grep/glob over the repos in scope, `git log/show`, `gh pr view/list`, and read-only sqlite. User settings, plugins, hooks and MCP servers are skipped so each answer starts fast.
 4. The answer streams back into the terminal. A typical answer takes 10–25s.
 
 ## Privacy and etiquette
