@@ -75,15 +75,45 @@ The newest markdown file in `~/.claude/briefs/` is included in every request. Wr
 
 ### Jira
 
-Your local history can't answer questions about tickets you haven't started. Set three env vars to fill that gap:
+Your local history can't answer questions about tickets you haven't started. Connect Jira to fill that gap.
+
+**1. Create a token.** Go to [id.atlassian.com → API tokens](https://id.atlassian.com/manage-profile/security/api-tokens) and choose **Create API token**, *not* "with scopes": scoped tokens don't work with basic auth and always return 401. Copy it with the dialog's Copy button. It's only shown once.
+
+**2. Check the clipboard actually has it.** A token is about 190 characters:
 
 ```bash
-export JIRA_URL=https://your-team.atlassian.net
-export JIRA_EMAIL=you@company.com
-export JIRA_API_TOKEN=$(security find-generic-password -s jira-api-token -w)  # token from id.atlassian.com, kept in the keychain
+pbpaste | wc -c
 ```
 
-With these set:
+**3. Store it in the keychain from the clipboard.** Use this instead of the interactive `-w` prompt, which can silently save an empty value if the paste doesn't take. `-U` overwrites an existing item:
+
+```bash
+security add-generic-password -U -a "$USER" -s jira-api-token -w "$(pbpaste)"
+security find-generic-password -s jira-api-token -w | wc -c   # ~190 again, not 1
+```
+
+**4. Check Jira accepts it.** This should print `200`:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" -u "you@company.com:$(security find-generic-password -s jira-api-token -w)" https://your-team.atlassian.net/rest/api/2/myself
+```
+
+A `401` means the email or token is wrong, and an empty token is the usual cause. The email must be exactly the one at [id.atlassian.com → Email](https://id.atlassian.com/manage-profile/email). If a correct classic token still gets 401, your org admin may have disabled API tokens.
+
+**5. Add a wrapper to `~/.zshrc`.** It hands the token to `companion` only, instead of exporting it to every process:
+
+```bash
+companion() {
+  JIRA_URL=https://your-team.atlassian.net \
+  JIRA_EMAIL=you@company.com \
+  JIRA_API_TOKEN=$(security find-generic-password -s jira-api-token -w) \
+  command companion "$@"
+}
+```
+
+Open a new terminal and run `companion .`. Startup should show `jira: signed in as <you>, N projects`. If it shows `jira disabled: …`, the message says what's wrong.
+
+With Jira connected:
 
 - **Spoken keys:** when a ticket key is said ("SA 3424" and "sa3424" both count), the ticket is fetched directly from Jira and attached to the question. That covers summary, status, assignee, description, links and the latest comments, and takes about 0.5s with no extra tool calls. Only keys of your real Jira projects are matched.
 - **Described tickets:** at startup it indexes every open ticket in the current sprint, one line each. So "the invoice export thing" still resolves to the right ticket, even when nobody says the key and it isn't yours. Change what gets indexed with `COMPANION_JIRA_JQL`.
