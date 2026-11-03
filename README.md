@@ -4,7 +4,7 @@ Instant recall of your own engineering history, during meetings.
 
 When you ship across many repos and tickets, the specifics blur: which PR, which commit, which tradeoff came up in review. When a question comes up, press Enter. The companion, which has been transcribing the conversation locally in the background, works out what was just asked and pulls the exact details from your code, git history, PRs, Claude Code sessions and Jira. You get the answer in one line, a few supporting facts, and the commits, PRs and files behind it, without breaking the conversation to go digging.
 
-![demo](https://github.com/user-attachments/assets/62f14e23-2483-47b7-a143-97a69118eddf)
+![demo](https://github.com/user-attachments/assets/d81b91d2-0fe7-4be7-9fd4-ddcfd646bdb8)
 
 <sub>Asking the companion about its own repo. The other person's voice is macOS `say` fed in as the mic. Everything after that is the real pipeline: local whisper, Claude reading the code, and the meeting summary on quit. Waits are trimmed.</sub>
 
