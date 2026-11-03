@@ -163,12 +163,21 @@ def jira_key_pattern():
     if not (JIRA_URL and os.environ.get("JIRA_API_TOKEN")):
         return None
     try:
+        # Jira Cloud silently treats rejected credentials as anonymous, so check them explicitly
+        me = jira_get("myself")
         keys = [p["key"] for p in jira_get("project")]
-    except (urllib.error.URLError, TimeoutError) as e:
-        print(f"jira disabled: {e}")
+    except urllib.error.HTTPError as e:
+        hint = " (check JIRA_EMAIL and that the token is a classic API token, not a scoped one)" if e.code in (401, 403) else ""
+        print(f"{BOLD}jira disabled:{RESET} HTTP {e.code}{hint}")
         return None
-    print(f"{DIM}jira: {len(keys)} projects{RESET}")
-    return re.compile(rf"\b({'|'.join(map(re.escape, keys))})[\s-]?(\d+)\b", re.I) if keys else None
+    except (urllib.error.URLError, TimeoutError) as e:
+        print(f"{BOLD}jira disabled:{RESET} {e}")
+        return None
+    if not keys:
+        print(f"{BOLD}jira disabled:{RESET} {me.get('emailAddress', os.environ.get('JIRA_EMAIL'))} can't see any projects")
+        return None
+    print(f"{DIM}jira: signed in as {me.get('displayName')}, {len(keys)} projects{RESET}")
+    return re.compile(rf"\b({'|'.join(map(re.escape, keys))})[\s-]?(\d+)\b", re.I)
 
 
 def jira_index():
