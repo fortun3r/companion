@@ -21,13 +21,14 @@ When you ship across many repos and tickets, the specifics blur: which PR, which
 
 ```bash
 git clone https://github.com/fortun3r/companion.git
-ln -s "$PWD/companion/companion.py" ~/.local/bin/companion   # any directory on your PATH
+mkdir -p ~/.local/bin   # uv's installer already puts this on your PATH
+ln -s "$PWD/companion/companion.py" ~/.local/bin/companion
 
 cd your-project
 companion .
 ```
 
-The first run downloads the whisper model (~1.6 GB), and macOS asks for microphone access for your terminal app.
+The first run takes a few minutes: uv sets up Python and the dependencies (~150 MB), then the whisper model downloads (~1.6 GB). macOS will ask for microphone access for your terminal app. If you deny it, the companion says so on the first Enter. `companion --help` lists the keys and options.
 
 | Input | Does |
 |---|---|

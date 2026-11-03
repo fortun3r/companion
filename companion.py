@@ -508,8 +508,13 @@ def conversation_prompt(listener, sent_upto, seconds, focus):
 
 
 def main():
+    if {"-h", "--help"} & set(sys.argv[1:]):
+        print(__doc__.strip())
+        return
     record = "--record" in sys.argv
     args = [a for a in sys.argv[1:] if a != "--record"]
+    if unknown := [a for a in args if a.startswith("-")]:
+        sys.exit(f"unknown option: {' '.join(unknown)} (see companion --help)")
     scope_text, dirs = scope_context([resolve(a) for a in args] or [Path.cwd()])
     summary = [line for line in scope_text.splitlines() if line.startswith(("- Repos", "- claude-mem"))]
     print(DIM + "\n".join(summary) + RESET)
