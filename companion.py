@@ -159,7 +159,7 @@ def jira_get(path):
 
 
 def jira_key_pattern():
-    """Match only real project keys, loosely, since whisper writes SA-3424 as "SA 3424" or "sa3424"."""
+    """Match only real project keys, loosely, since whisper writes ABC-123 as "ABC 123" or "abc123"."""
     if not (JIRA_URL and os.environ.get("JIRA_API_TOKEN")):
         return None
     try:
