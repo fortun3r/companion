@@ -1,8 +1,8 @@
 # companion
 
-A push-to-talk meeting companion for developers who do most of their work with Claude Code.
+Instant recall of your own engineering history, during meetings.
 
-When someone asks you about work you shipped with AI help and you don't remember the details, press Enter. The companion transcribes the last few seconds of the conversation locally, then asks Claude to answer it from your own git history, PRs and Claude Code transcripts. You get a one-line answer you can say out loud, a few supporting bullets, and the commits/PRs it came from.
+When you ship across many repos and tickets, the specifics blur: which PR, which commit, which tradeoff came up in review. When a question comes up, press Enter. The companion transcribes the last few seconds locally and pulls the exact details from your git history, PRs and Claude Code sessions. You get the answer in one line, a few supporting facts, and the commits and PRs behind it, without breaking the conversation to go digging.
 
 ```
 > 
