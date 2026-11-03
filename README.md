@@ -2,7 +2,7 @@
 
 Instant recall of your own engineering history, during meetings.
 
-When you ship across many repos and tickets, the specifics blur: which PR, which commit, which tradeoff came up in review. When a question comes up, press Enter. The companion transcribes the last few seconds locally and pulls the exact details from your code, git history, PRs, Claude Code sessions and Jira. You get the answer in one line, a few supporting facts, and the commits, PRs and files behind it, without breaking the conversation to go digging.
+When you ship across many repos and tickets, the specifics blur: which PR, which commit, which tradeoff came up in review. When a question comes up, press Enter. The companion, which has been transcribing the conversation locally in the background, works out what was just asked and pulls the exact details from your code, git history, PRs, Claude Code sessions and Jira. You get the answer in one line, a few supporting facts, and the commits, PRs and files behind it, without breaking the conversation to go digging.
 
 ```
 > 
@@ -42,12 +42,27 @@ The first run downloads the whisper model (~1.6 GB), and macOS asks for micropho
 
 | Input | Does |
 |---|---|
-| `Enter` | answer from the last 20s of audio |
-| `60` + `Enter` | answer from the last 60s |
-| `? why did we drop redis` | ask a typed question |
-| `q` | quit |
+| `Enter` | answer what you need right now |
+| `the pagination part` + `Enter` | same, but focused on that |
+| `60` + `Enter` | treat the last 60s, not 20s, as "the latest part" |
+| `? why did we drop redis` | ask a typed question, no audio |
+| `q` | quit, and write the meeting summary |
 
-Follow-up questions keep the context from earlier ones.
+### What it answers
+
+It transcribes the conversation in the background, cutting at pauses. When you press Enter, Claude gets two parts: the conversation since your last question, as context, and the latest ~20s, where the question most likely is. The earlier part resolves "that ticket" or "so why not the other approach?", and ticket keys mentioned minutes ago still get looked up.
+
+| What just happened | What you get |
+|---|---|
+| Someone asked you something | The answer |
+| Several questions in a row | The last one answered, plus a line for any still open |
+| A follow-up to something from earlier | The answer, using the earlier context |
+| No question, just discussion | What's being discussed, and the one fact worth adding |
+| You were the one talking | The details you were reaching for |
+
+Follow-up questions keep the context from earlier ones. Most audio is already transcribed when you press Enter, so the answer starts right away.
+
+The transcript stays in memory. Pass `--record` to also save it next to the meeting notes, as `<date>-<time>-<scope>-transcript.md`. Then the summary covers the whole meeting, not just the parts around your questions.
 
 ### Scope
 
@@ -157,7 +172,9 @@ With Jira connected:
 | Env var | Default | |
 |---|---|---|
 | `COMPANION_MODEL` | `sonnet` | any `claude --model` value; `opus` is slower but better |
-| `COMPANION_WINDOW` | `20` | default seconds of audio per question |
+| `COMPANION_WINDOW` | `20` | seconds treated as "the latest part" |
+| `COMPANION_CONTEXT` | `600` | max seconds of earlier conversation sent as context |
+| `COMPANION_SPEECH_RATIO` | `3` | how much louder than the room's noise floor counts as speech; raise it if background noise turns into text |
 | `COMPANION_ROOT` | `~/dev` | where scope names are looked up |
 | `COMPANION_WHISPER` | `mlx-community/whisper-large-v3-turbo` | any mlx-whisper model |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | where Claude Code keeps transcripts |
@@ -168,15 +185,15 @@ With Jira connected:
 
 ## How it works
 
-1. A rolling 2-minute buffer of mic audio is kept in memory. Audio is never written to disk.
-2. On Enter, the chosen window is transcribed locally with whisper (about 3s on an M-series Mac).
+1. Mic audio is transcribed locally with whisper in the background, in 8–30s chunks cut at pauses. Chunks without speech, judged against the room's noise floor, are skipped, since whisper otherwise invents text like "Thank you.". Audio is never written to disk.
+2. On Enter, the untranscribed tail is transcribed (about 1s on an M-series Mac). The text is split into context (since your last question, max 10 min) and the latest ~20s.
 3. The transcript goes to `claude -p` with a system prompt describing your scope. Claude gets read-only tools: file read/grep/glob over the repos in scope, `git log/show`, `gh pr view/list`, and read-only sqlite. User settings, plugins, hooks and MCP servers are skipped so each answer starts fast.
 4. The answer streams back into the terminal. A typical answer takes 10–25s.
 
 ## Privacy and etiquette
 
-- Audio never leaves your machine. The **transcript text** is sent to Claude, the same as anything you type into Claude Code, along with any Jira tickets it fetched.
-- Meeting notes, which include what other people said in the snippets you asked about, are stored as plain markdown in `~/.claude/meetings/`. Treat them like any meeting notes you'd keep.
+- Audio never leaves your machine. **Transcript text** is sent to Claude on each Enter: the conversation since your last question, max 10 min, plus any Jira tickets fetched. When you quit, whatever was said since your last question is sent for the summary.
+- The full transcript is only kept in memory unless you pass `--record`. Meeting notes, which include what other people said around your questions, are stored as plain markdown in `~/.claude/meetings/`. Treat them like any meeting notes you'd keep.
 - It transcribes everyone in the room. Recording or transcribing people without their consent is illegal in some places, and your employer may have its own rules. Check before using it.
 - It doesn't tell speakers apart. Claude infers which question was aimed at you, and sometimes gets it wrong.
 - Answers come from your history, but they can still be wrong. Check the refs before repeating something important.

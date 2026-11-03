@@ -5,15 +5,16 @@
 # ///
 """Push-to-talk meeting companion.
 
-Keeps the last few minutes of mic audio in memory. Press Enter to transcribe the
-recent window locally and get a suggested answer from Claude, grounded in your
-git history, Claude Code transcripts, claude-mem (if installed) and any brief in
-~/.claude/briefs.
+Transcribes the conversation locally in the background. Press Enter to get a
+suggested answer from Claude for the latest question, with the earlier
+conversation as context, grounded in your code, git history, Claude Code
+transcripts, claude-mem (if installed), Jira and any brief in ~/.claude/briefs.
 
-  Enter        answer using the last WINDOW seconds
-  20 Enter     answer using the last 20 seconds
-  ? text       ask a typed question instead
-  q            quit
+  Enter        answer what was just asked (the question is likely in the last WINDOW seconds)
+  60 Enter     treat the last 60 seconds as the latest part
+  text Enter   same as Enter, but focus the answer on "text"
+  ? text       ask a typed question, no audio
+  q            quit (and write the meeting summary)
 
 Scope args set where it looks (default: current directory), including every repo
 nested inside. Each is a path, or a folder name under $COMPANION_ROOT (default ~/dev):
@@ -21,11 +22,14 @@ nested inside. Each is a path, or a folder name under $COMPANION_ROOT (default ~
   companion my-app
   companion ~/work
   companion api web
+  companion . --record     also save the full transcript next to the meeting notes
 """
 
 import base64
 import collections
 import json
+import queue
+import threading
 import os
 import re
 import sqlite3
@@ -35,7 +39,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 WHISPER = os.environ.get("COMPANION_WHISPER", "mlx-community/whisper-large-v3-turbo")
@@ -52,8 +56,13 @@ import sounddevice as sd
 
 RATE = 16_000
 BLOCK = RATE // 10
-BUFFER_SECONDS = 120
 WINDOW = int(os.environ.get("COMPANION_WINDOW", 20))
+CONTEXT_SECONDS = int(os.environ.get("COMPANION_CONTEXT", 600))
+MIN_CHUNK, MAX_CHUNK = 8, 30  # seconds of audio per background transcription
+PAUSE_BLOCKS = 5  # 0.5s of quiet ends a chunk once it's past MIN_CHUNK
+# A chunk is only transcribed if it has 0.5s+ this many times louder than the room's noise floor.
+# Whisper turns pure room noise into "Thank you." and its no_speech_prob doesn't flag it.
+SPEECH_RATIO = float(os.environ.get("COMPANION_SPEECH_RATIO", 3))
 MODEL = os.environ.get("COMPANION_MODEL", "sonnet")
 HOME = Path.home()
 ROOT = Path(os.environ.get("COMPANION_ROOT", HOME / "dev")).expanduser()
@@ -76,7 +85,13 @@ def git_identity():
 
 SYSTEM = f"""You are my live meeting companion. I'm a software developer (git identity: {git_identity()}). Most of my work is done with Claude Code, so I don't always remember the details of what "I" built.
 
-You get a raw local transcript of the last part of a face-to-face meeting. It mixes my voice and the other person's, with no speaker labels and possible transcription errors. Find the most recent question or topic directed at me and tell me what to say.
+You get a raw local transcript of a face-to-face meeting in two parts: the conversation since my last question (context), then the latest part, where what I need now most likely is. It mixes my voice and others', with no speaker labels and possible transcription errors. Use the earlier part to resolve references like "that ticket" or "the other approach", and to find tickets mentioned before. Decide what I need right now:
+- Someone just asked me something: answer it.
+- Several questions in a row: answer the last one, plus one line for any earlier one still unanswered.
+- A follow-up to something said earlier: answer it, using the earlier context.
+- No question, just discussion: one line on what's being discussed, then the one fact most worth adding.
+- I was the one talking: the details I was reaching for.
+If I give a focus, answer about that, using the conversation as context.
 
 Where to look (read-only), fastest first:
 1. The brief below, if any.
@@ -265,7 +280,93 @@ Latest comments:
 
 def transcribe(audio):
     result = mlx_whisper.transcribe(audio, path_or_hf_repo=WHISPER, condition_on_previous_text=False)
-    return result["text"].strip()
+    # Whisper's own hallucination thresholds: looping text compresses too well, guesses score low
+    kept = [s["text"].strip() for s in result["segments"] if s["compression_ratio"] <= 2.4 and s["avg_logprob"] >= -1.0]
+    return " ".join(kept).strip()
+
+
+class Listener:
+    """Transcribes the mic in the background, cutting chunks at pauses.
+
+    All whisper calls happen on the worker thread: MLX streams are per-thread.
+    Times are seconds of audio received, so the main thread can ask for "the last N seconds".
+    """
+
+    def __init__(self, record_path=None, started=None):
+        self.audio = queue.Queue()
+        self.flushes = queue.Queue()
+        self.segments = []  # (end second, text), the whole meeting; text is small
+        self.lock = threading.Lock()
+        self.received = 0
+        self.levels = collections.deque(maxlen=600)  # last minute of block loudness, for the noise floor
+        self.ready = threading.Event()
+        self.record_path, self.started = record_path, started
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def on_audio(self, indata, frames, time, status):
+        self.audio.put(indata[:, 0].copy())
+
+    def now(self):
+        return self.received * BLOCK / RATE
+
+    def flush(self):
+        """Transcribe whatever is pending right now and wait for it."""
+        done = threading.Event()
+        self.flushes.put(done)
+        done.wait()
+
+    def text(self, start, end=float("inf")):
+        with self.lock:
+            return [(t, s) for t, s in self.segments if start < t <= end]
+
+    def _run(self):
+        transcribe(np.zeros(RATE, dtype=np.float32))
+        self.ready.set()
+        pending, quiet, sumsq = [], 0, 0.0
+        while True:
+            try:
+                blocks = [self.audio.get(timeout=0.1)]
+            except queue.Empty:
+                blocks = []
+            try:
+                done = self.flushes.get_nowait()
+            except queue.Empty:
+                done = None
+            if done:  # take everything already captured, not just this block
+                while not self.audio.empty():
+                    blocks.append(self.audio.get_nowait())
+
+            for block in blocks:
+                pending.append(block)
+                self.received += 1
+                rms = float(np.sqrt(np.mean(block**2)))
+                self.levels.append(rms)
+                sumsq += float(np.sum(block**2))
+                level = np.sqrt(sumsq / (len(pending) * BLOCK))
+                quiet = quiet + 1 if rms < 0.3 * level else 0
+
+            seconds = len(pending) * BLOCK / RATE
+            if done or seconds >= MAX_CHUNK or (seconds >= MIN_CHUNK and quiet >= PAUSE_BLOCKS):
+                self._cut(pending)
+                pending, quiet, sumsq = [], 0, 0.0
+            if done:
+                done.set()
+
+    def _cut(self, pending):
+        if not pending:
+            return
+        floor = np.percentile(self.levels, 10)
+        loud = sum(np.sqrt(np.mean(b**2)) > max(SPEECH_RATIO * floor, 1e-3) for b in pending)
+        if loud < 5:
+            return
+        text = transcribe(np.concatenate(pending))
+        if not text:
+            return
+        with self.lock:
+            self.segments.append((self.now(), text))
+        if self.record_path:
+            with self.record_path.open("a") as f:
+                f.write(f"[{self.started + timedelta(seconds=self.now()):%H:%M:%S}] {text}\n")
 
 
 def ask(prompt, session_id, first, scope_text, dirs):
@@ -314,43 +415,68 @@ def log_exchange(notes, title, question, answer):
         f.write(f"\n## {datetime.now():%H:%M} · {question}\n\n{answer}\n")
 
 
-def summarize(notes, title, session_id, scope_text, dirs):
+def summarize(notes, title, prompt, session_id, first, scope_text, dirs):
     print(f"\n{DIM}writing meeting summary to {notes} (Ctrl+C to skip)…{RESET}\n")
     try:
-        summary = ask(SUMMARY_PROMPT, session_id, False, scope_text, dirs)
+        summary = ask(prompt, session_id, first, scope_text, dirs)
     except KeyboardInterrupt:
         return
-    exchanges = notes.read_text().removeprefix(f"# {title}\n")
+    exchanges = notes.read_text().removeprefix(f"# {title}\n") if notes.exists() else ""
+    notes.parent.mkdir(parents=True, exist_ok=True)
     notes.write_text(f"# {title}\n\n{summary}\n\n---\n{exchanges}")
 
 
+def as_text(segments):
+    return " ".join(s for _, s in segments)
+
+
+def conversation_prompt(listener, sent_upto, seconds, focus):
+    """Split the transcript into what's new since the last question and the latest `seconds`."""
+    now = listener.now()
+    recent = listener.text(max(sent_upto, now - CONTEXT_SECONDS))
+    earlier = [seg for seg in recent if seg[0] <= now - seconds]
+    latest = [seg for seg in recent if seg[0] > now - seconds]
+    if not latest and earlier:  # a chunk can end before the window, e.g. on the pause right after a question
+        latest = [earlier.pop()]
+    if not latest:
+        return None, None
+    prompt = f"Conversation since my last question (context):\n{as_text(earlier)}\n\n" if earlier else ""
+    prompt += f"Latest part (most likely what I need now):\n{as_text(latest)}"
+    if focus:
+        prompt += f"\n\nFocus: {focus}"
+    return prompt, as_text(latest)
+
+
 def main():
-    scope_text, dirs = scope_context([resolve(a) for a in sys.argv[1:]] or [Path.cwd()])
+    record = "--record" in sys.argv
+    args = [a for a in sys.argv[1:] if a != "--record"]
+    scope_text, dirs = scope_context([resolve(a) for a in args] or [Path.cwd()])
     summary = [line for line in scope_text.splitlines() if line.startswith(("- Repos", "- claude-mem"))]
     print(DIM + "\n".join(summary) + RESET)
-
-    blocks = collections.deque(maxlen=BUFFER_SECONDS * RATE // BLOCK)
-
-    def on_audio(indata, frames, time, status):
-        blocks.append(indata[:, 0].copy())
 
     jira_keys = jira_key_pattern()
     if jira_keys:
         scope_text += jira_index()
     attached = set()  # tickets already in the Claude session; follow-ups resume it
 
-    print(f"{DIM}loading whisper…{RESET}")
-    transcribe(np.zeros(RATE, dtype=np.float32))
-
-    scope_name = "-".join(resolve(a).name for a in sys.argv[1:]) or Path.cwd().name
+    scope_name = "-".join(resolve(a).name for a in args) or Path.cwd().name
     started = datetime.now()
     notes = NOTES_HOME / "meetings" / f"{started:%Y-%m-%d-%H%M}-{re.sub(r'[^A-Za-z0-9_-]+', '-', scope_name)}.md"
     title = f"Meeting {started:%Y-%m-%d %H:%M} · {scope_name}"
+    transcript = notes.with_name(notes.stem + "-transcript.md") if record else None
+    if transcript:
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        print(f"{DIM}recording transcript to {transcript}{RESET}")
+
+    print(f"{DIM}loading whisper…{RESET}")
+    listener = Listener(transcript, started)
+    listener.ready.wait()
 
     session_id = str(uuid.uuid4())
     first = True
-    with sd.InputStream(samplerate=RATE, channels=1, dtype="float32", blocksize=BLOCK, callback=on_audio):
-        print(f"{BOLD}listening.{RESET} Enter = last {WINDOW}s · '60' = last 60s · '? question' = typed · q = quit")
+    sent_upto = 0.0  # audio second up to which the conversation has been sent to Claude
+    with sd.InputStream(samplerate=RATE, channels=1, dtype="float32", blocksize=BLOCK, callback=listener.on_audio):
+        print(f"{BOLD}listening.{RESET} Enter = answer · '60' = last 60s · 'text' = focus · '? question' = typed · q = quit")
         while True:
             try:
                 cmd = input("> ").strip()
@@ -363,15 +489,19 @@ def main():
                 question = f"asked: {cmd[1:].strip()}"
                 prompt = f"Typed question: {cmd[1:].strip()}"
             else:
-                seconds = int(cmd) if cmd.isdigit() else WINDOW
-                audio = np.concatenate(list(blocks)[-seconds * RATE // BLOCK:]) if blocks else np.zeros(0, np.float32)
-                if audio.size == 0 or np.sqrt(np.mean(audio**2)) < 1e-4:
+                listener.flush()
+                if listener.received == 0:
                     print("no audio captured. Check the mic permission for this terminal app in System Settings › Privacy › Microphone.")
                     continue
-                text = transcribe(audio)
-                print(f"{DIM}heard: {text}{RESET}\n")
-                question = f"heard: {text}"
-                prompt = f"Transcript of the last {seconds}s:\n{text}"
+                seconds = int(cmd) if cmd.isdigit() else WINDOW
+                focus = "" if cmd.isdigit() else cmd
+                prompt, latest = conversation_prompt(listener, sent_upto, seconds, focus)
+                if not prompt:
+                    print("nothing heard yet.")
+                    continue
+                sent_upto = listener.now()
+                print(f"{DIM}heard: {latest}{RESET}\n")
+                question = f"heard: {latest}" + (f" · focus: {focus}" if focus else "")
 
             if jira_keys:
                 keys = {f"{m[1].upper()}-{m[2]}" for m in jira_keys.finditer(prompt)} - attached
@@ -385,8 +515,11 @@ def main():
             first = False
             log_exchange(notes, title, question, answer)
 
-    if notes.exists():
-        summarize(notes, title, session_id, scope_text, dirs)
+    listener.flush()
+    unsent = as_text(listener.text(sent_upto))
+    if notes.exists() or (record and listener.segments):
+        prompt = (f"Conversation since my last question:\n{unsent}\n\n" if unsent else "") + SUMMARY_PROMPT
+        summarize(notes, title, prompt, session_id, first, scope_text, dirs)
         print(f"\n{DIM}notes: {notes}{RESET}")
 
 
