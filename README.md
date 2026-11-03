@@ -30,7 +30,7 @@ It moves invoice sync to a queue so retries don't block the nightly run.
 ## Usage
 
 ```bash
-git clone https://github.com/isasiluispy/companion.git
+git clone https://github.com/fortun3r/companion.git
 cd your-project
 /path/to/companion/companion.py
 ```
