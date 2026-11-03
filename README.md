@@ -39,8 +39,8 @@ The first run downloads the whisper model (~1.6 GB), and macOS asks for micropho
 
 | Input | Does |
 |---|---|
-| `Enter` | answer from the last 45s of audio |
-| `20` + `Enter` | answer from the last 20s |
+| `Enter` | answer from the last 20s of audio |
+| `60` + `Enter` | answer from the last 60s |
 | `? why did we drop redis` | ask a typed question |
 | `q` | quit |
 
@@ -74,7 +74,7 @@ The newest markdown file in `~/.claude/briefs/` is included in every request. Wr
 | Env var | Default | |
 |---|---|---|
 | `COMPANION_MODEL` | `sonnet` | any `claude --model` value; `opus` is slower but better |
-| `COMPANION_WINDOW` | `45` | default seconds of audio per question |
+| `COMPANION_WINDOW` | `20` | default seconds of audio per question |
 | `COMPANION_ROOT` | `~/dev` | where scope names are looked up |
 | `COMPANION_WHISPER` | `mlx-community/whisper-large-v3-turbo` | any mlx-whisper model |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | where Claude Code keeps transcripts |

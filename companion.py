@@ -40,7 +40,7 @@ import sounddevice as sd
 RATE = 16_000
 BLOCK = RATE // 10
 BUFFER_SECONDS = 120
-WINDOW = int(os.environ.get("COMPANION_WINDOW", 45))
+WINDOW = int(os.environ.get("COMPANION_WINDOW", 20))
 MODEL = os.environ.get("COMPANION_MODEL", "sonnet")
 WHISPER = os.environ.get("COMPANION_WHISPER", "mlx-community/whisper-large-v3-turbo")
 HOME = Path.home()
@@ -186,7 +186,7 @@ def main():
     session_id = str(uuid.uuid4())
     first = True
     with sd.InputStream(samplerate=RATE, channels=1, dtype="float32", blocksize=BLOCK, callback=on_audio):
-        print(f"{BOLD}listening.{RESET} Enter = last {WINDOW}s · '20' = last 20s · '? question' = typed · q = quit")
+        print(f"{BOLD}listening.{RESET} Enter = last {WINDOW}s · '60' = last 60s · '? question' = typed · q = quit")
         while True:
             try:
                 cmd = input("> ").strip()
