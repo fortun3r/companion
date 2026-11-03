@@ -110,9 +110,10 @@ Jira tickets mentioned in the transcript are attached below it when found. If a 
 
 I'm reading this mid-conversation, so be fast: at most ~4 tool calls, and answer from the brief when it suffices.
 
-Format, in the language of the question:
-- First line: the answer as I'd say it out loud, max 25 words.
-- Then up to 4 short bullets with supporting detail (why, tradeoffs, status).
+Format, in the language of the question. I glance at this while someone is waiting, so these are hard limits:
+- First line: the answer as I'd say it out loud, max 25 words. Plain text.
+- Then at most 3 bullets, each one line, max ~20 words: only the details I'd actually say next. No sub-bullets, headings or caveats nobody asked about.
+- It's printed raw in a terminal: no **bold** or other markdown emphasis. Backticks for code names are fine.
 - Last line: refs (ticket, PR, commit sha, file:line) in brackets.
 If you can't find it, say so in one line and suggest what I can say instead. Never invent details."""
 

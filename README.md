@@ -4,20 +4,9 @@ Instant recall of your own engineering history, during meetings.
 
 When you ship across many repos and tickets, the specifics blur: which PR, which commit, which tradeoff came up in review. When a question comes up, press Enter. The companion, which has been transcribing the conversation locally in the background, works out what was just asked and pulls the exact details from your code, git history, PRs, Claude Code sessions and Jira. You get the answer in one line, a few supporting facts, and the commits, PRs and files behind it, without breaking the conversation to go digging.
 
-```
-> 
-heard: What is the ticket ABC-123 about? Why did you go with the queue instead of a cron?
+![demo](https://github.com/user-attachments/assets/62f14e23-2483-47b7-a143-97a69118eddf)
 
-[Bash…]
-[Bash…]
-It moves invoice sync to a queue so retries don't block the nightly run.
-
-- The cron version timed out on large accounts. The queue processes one account per job.
-- Retries use exponential backoff, capped at 5 attempts.
-- It's merged and has been in production since Oct 20.
-
-[ABC-123, PR #412, 9f3c2e1]
-```
+<sub>Asking the companion about its own repo. The other person's voice is macOS `say` fed in as the mic. Everything after that is the real pipeline: local whisper, Claude reading the code, and the meeting summary on quit. Waits are trimmed.</sub>
 
 ## Requirements
 
