@@ -73,6 +73,30 @@ Claude can only open files inside the scope.
 
 The newest markdown file in `~/.claude/briefs/` is included in every request. Write a short "what I did this week and why" there before a meeting (or have Claude Code write it). Answers get faster and better, because Claude needs fewer searches.
 
+### Meeting notes
+
+Every question and answer is saved as it happens to `~/.claude/meetings/<date>-<time>-<scope>.md`, so a crash or Ctrl+C loses nothing. When you quit with `q`, Claude writes a summary at the top of the file:
+
+```markdown
+# Meeting 2026-11-03 18:21 · my-app
+
+### Topics
+- Whether the pixel tracks invites: only the landing page loads it (ABC-123)
+
+### I committed to
+- Check the invite page events tomorrow and get back to them
+
+### Open questions
+- Do we want a pixel event on invites at all?
+
+---
+
+## 18:22 · heard: does the pixel track invites?
+…
+```
+
+"I committed to" lists only follow-ups you actually said out loud in the transcripts, not things the companion suggested you say. Press Ctrl+C while the summary is being written to skip it.
+
 ### Jira
 
 Your local history can't answer questions about tickets you haven't started. Connect Jira to fill that gap.
@@ -129,12 +153,13 @@ With Jira connected:
 | `COMPANION_WHISPER` | `mlx-community/whisper-large-v3-turbo` | any mlx-whisper model |
 | `CLAUDE_CONFIG_DIR` | `~/.claude` | where Claude Code keeps transcripts |
 | `CLAUDE_MEM_DB` | `~/.claude-mem/claude-mem.db` | claude-mem database |
+| `COMPANION_NOTES_HOME` | `~/.claude` | where `briefs/` and `meetings/` live |
 | `JIRA_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` | unset | enable Jira lookups |
 | `COMPANION_JIRA_JQL` | `sprint in openSprints() AND statusCategory != Done ORDER BY updated DESC` | tickets indexed at startup (max 100) |
 
 ## How it works
 
-1. A rolling 2-minute buffer of mic audio is kept in memory. Nothing is written to disk.
+1. A rolling 2-minute buffer of mic audio is kept in memory. Audio is never written to disk.
 2. On Enter, the chosen window is transcribed locally with whisper (about 3s on an M-series Mac).
 3. The transcript goes to `claude -p` with a system prompt describing your scope. Claude gets read-only tools: `git log/show`, `gh pr view/list`, grep, and read-only sqlite. User settings, plugins, hooks and MCP servers are skipped so each answer starts fast.
 4. The answer streams back into the terminal. A typical answer takes 10–25s.
@@ -142,6 +167,7 @@ With Jira connected:
 ## Privacy and etiquette
 
 - Audio never leaves your machine. The **transcript text** is sent to Claude, the same as anything you type into Claude Code, along with any Jira tickets it fetched.
+- Meeting notes, which include what other people said in the snippets you asked about, are stored as plain markdown in `~/.claude/meetings/`. Treat them like any meeting notes you'd keep.
 - It transcribes everyone in the room. Recording or transcribing people without their consent is illegal in some places, and your employer may have its own rules. Check before using it.
 - It doesn't tell speakers apart. Claude infers which question was aimed at you, and sometimes gets it wrong.
 - Answers come from your history, but they can still be wrong. Check the refs before repeating something important.

@@ -35,6 +35,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
@@ -51,6 +52,8 @@ WHISPER = os.environ.get("COMPANION_WHISPER", "mlx-community/whisper-large-v3-tu
 HOME = Path.home()
 ROOT = Path(os.environ.get("COMPANION_ROOT", HOME / "dev")).expanduser()
 CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", HOME / ".claude")).expanduser()
+# Briefs and meeting notes stay in one place even when CLAUDE_CONFIG_DIR switches per account
+NOTES_HOME = Path(os.environ.get("COMPANION_NOTES_HOME", HOME / ".claude")).expanduser()
 MEM_DB = Path(os.environ.get("CLAUDE_MEM_DB", HOME / ".claude-mem/claude-mem.db")).expanduser()
 HERE = Path(__file__).resolve().parent
 JIRA_URL = os.environ.get("JIRA_URL", "").rstrip("/")
@@ -89,6 +92,19 @@ Format, in the language of the question:
 - Then up to 4 short bullets with supporting detail (why, tradeoffs, status).
 - Last line: refs (ticket, PR, commit sha) in brackets.
 If you can't find it, say so in one line and suggest what I can say instead. Never invent details."""
+
+SUMMARY_PROMPT = """The meeting is over. Write my notes for it as markdown, with no preamble and no other text:
+
+### Topics
+One line per topic discussed, with ticket keys.
+
+### I committed to
+Follow-ups I said I'd do, from my own words in the transcripts (e.g. "I'll check after this"). Write "none" if there were none. Don't count what you suggested I say unless the transcript shows I said it.
+
+### Open questions
+Things raised that nobody could answer yet.
+
+Use only this session's transcripts and answers."""
 
 
 def resolve(name):
@@ -147,7 +163,7 @@ SCOPE: only use context from these folders. Ignore every other repo, project and
 
 
 def latest_brief():
-    briefs = sorted((CLAUDE_DIR / "briefs").glob("*.md"), key=lambda p: p.stat().st_mtime)
+    briefs = sorted((NOTES_HOME / "briefs").glob("*.md"), key=lambda p: p.stat().st_mtime)
     return f"\n\nLatest brief ({briefs[-1].name}):\n{briefs[-1].read_text()}" if briefs else ""
 
 
@@ -254,7 +270,7 @@ def ask(prompt, session_id, first, scope_text, dirs):
         "--setting-sources", "project",
         "--strict-mcp-config",
         "--disable-slash-commands",
-        "--add-dir", *(str(d) for d in [*dirs, CLAUDE_DIR / "projects", CLAUDE_DIR / "briefs", MEM_DB.parent] if d.is_dir()),
+        "--add-dir", *(str(d) for d in [*dirs, CLAUDE_DIR / "projects", NOTES_HOME / "briefs", NOTES_HOME / "meetings", MEM_DB.parent] if d.is_dir()),
         "--allowedTools", "Read", "Grep", "Glob",
         "Bash(git -C:*)", "Bash(git log:*)", "Bash(git show:*)",
         "Bash(sqlite3 -readonly:*)", "Bash(gh pr view:*)", "Bash(gh pr list:*)",
@@ -262,6 +278,7 @@ def ask(prompt, session_id, first, scope_text, dirs):
     ]
     cmd += ["--session-id", session_id] if first else ["--resume", session_id]
 
+    answer = []
     proc = subprocess.Popen(cmd, cwd=HERE, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True)
     for line in proc.stdout:
         msg = json.loads(line)
@@ -274,8 +291,29 @@ def ask(prompt, session_id, first, scope_text, dirs):
             print(f"{DIM}[{event['content_block']['name']}…]{RESET}", flush=True)
         elif event["type"] == "content_block_delta" and event["delta"]["type"] == "text_delta":
             print(event["delta"]["text"], end="", flush=True)
+            answer.append(event["delta"]["text"])
     proc.wait()
     print()
+    return "".join(answer).strip()
+
+
+def log_exchange(notes, title, question, answer):
+    """Append as we go, so a crash or Ctrl+C loses nothing."""
+    notes.parent.mkdir(parents=True, exist_ok=True)
+    if not notes.exists():
+        notes.write_text(f"# {title}\n")
+    with notes.open("a") as f:
+        f.write(f"\n## {datetime.now():%H:%M} · {question}\n\n{answer}\n")
+
+
+def summarize(notes, title, session_id, scope_text, dirs):
+    print(f"\n{DIM}writing meeting summary to {notes} (Ctrl+C to skip)…{RESET}\n")
+    try:
+        summary = ask(SUMMARY_PROMPT, session_id, False, scope_text, dirs)
+    except KeyboardInterrupt:
+        return
+    exchanges = notes.read_text().removeprefix(f"# {title}\n")
+    notes.write_text(f"# {title}\n\n{summary}\n\n---\n{exchanges}")
 
 
 def main():
@@ -296,6 +334,11 @@ def main():
     print(f"{DIM}loading whisper…{RESET}")
     transcribe(np.zeros(RATE, dtype=np.float32))
 
+    scope_name = "-".join(resolve(a).name for a in sys.argv[1:]) or Path.cwd().name
+    started = datetime.now()
+    notes = NOTES_HOME / "meetings" / f"{started:%Y-%m-%d-%H%M}-{re.sub(r'[^A-Za-z0-9_-]+', '-', scope_name)}.md"
+    title = f"Meeting {started:%Y-%m-%d %H:%M} · {scope_name}"
+
     session_id = str(uuid.uuid4())
     first = True
     with sd.InputStream(samplerate=RATE, channels=1, dtype="float32", blocksize=BLOCK, callback=on_audio):
@@ -309,6 +352,7 @@ def main():
                 break
 
             if cmd.startswith("?"):
+                question = f"asked: {cmd[1:].strip()}"
                 prompt = f"Typed question: {cmd[1:].strip()}"
             else:
                 seconds = int(cmd) if cmd.isdigit() else WINDOW
@@ -318,6 +362,7 @@ def main():
                     continue
                 text = transcribe(audio)
                 print(f"{DIM}heard: {text}{RESET}\n")
+                question = f"heard: {text}"
                 prompt = f"Transcript of the last {seconds}s:\n{text}"
 
             if jira_keys:
@@ -328,8 +373,13 @@ def main():
                     print(f"{DIM}[jira {', '.join(sorted(keys))}]{RESET}")
                     prompt += "\n\nJira tickets mentioned:\n\n" + "\n\n".join(tickets)
 
-            ask(prompt, session_id, first, scope_text, dirs)
+            answer = ask(prompt, session_id, first, scope_text, dirs)
             first = False
+            log_exchange(notes, title, question, answer)
+
+    if notes.exists():
+        summarize(notes, title, session_id, scope_text, dirs)
+        print(f"\n{DIM}notes: {notes}{RESET}")
 
 
 if __name__ == "__main__":
