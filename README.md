@@ -60,7 +60,9 @@ It hears the mic and everything the Mac plays, so the other person on a call is 
 
 macOS needs your terminal app allowed under System Settings › Privacy & Security › Screen & System Audio Recording. Until then, capture is silent, and the companion tells you on Enter.
 
-System audio means all of it, including videos and music. In a face-to-face meeting, use `companion . --mic-only`.
+On a call, the transcript is labeled: the mic is `[me]`, system audio is `[them]`. Claude knows when a question came from someone else and when you were the one talking. Other people on the call aren't told apart from each other. On speakers, the mic also hears the call, so mic lines that match what system audio heard at the same moment are dropped; headphones are still more reliable.
+
+System audio means all of it, including videos and music. In a face-to-face meeting, use `companion . --mic-only`. Everyone is on the same mic there, so nothing is labeled.
 
 ### Scope
 
@@ -183,7 +185,7 @@ With Jira connected:
 
 ## How it works
 
-1. Mic audio is transcribed locally with whisper in the background, in 8–30s chunks cut at pauses. Chunks without speech, judged against the room's noise floor, are skipped, since whisper otherwise invents text like "Thank you.". Audio is never written to disk.
+1. Mic and system audio are transcribed locally with whisper in the background, in 8–30s chunks cut at pauses. Chunks without speech, judged against the room's noise floor, are skipped, since whisper otherwise invents text like "Thank you.". Audio is never written to disk.
 2. On Enter, the untranscribed tail is transcribed (about 1s on an M-series Mac). The text is split into context (since your last question, max 10 min) and the latest ~20s.
 3. The transcript goes to `claude -p` with a system prompt describing your scope. Claude gets read-only tools: file read/grep/glob over the repos in scope, `git log/show`, `gh pr view/list`, and read-only sqlite. User settings, plugins, hooks and MCP servers are skipped so each answer starts fast.
 4. The answer streams back into the terminal. A typical answer takes 10–25s.
@@ -193,7 +195,7 @@ With Jira connected:
 - Audio never leaves your machine, whether from the mic or from system audio. **Transcript text** is sent to Claude on each Enter: the conversation since your last question, max 10 min, plus any Jira tickets fetched. When you quit, whatever was said since your last question is sent for the summary.
 - The full transcript is only kept in memory unless you pass `--record`. Meeting notes, which include what other people said around your questions, are stored as plain markdown in `~/.claude/meetings/`. Treat them like any meeting notes you'd keep.
 - It transcribes everyone in the room and everyone on the call. Recording or transcribing people without their consent is illegal in some places, and your employer may have its own rules. Check before using it.
-- It doesn't tell speakers apart. Claude infers which question was aimed at you, and sometimes gets it wrong.
+- On a call it only knows `[me]` from `[them]`, not one person on the call from another. In person it doesn't tell anyone apart, so Claude infers who asked what, and sometimes gets it wrong.
 - Answers come from your history, but they can still be wrong. Check the refs before repeating something important.
 
 ## License

@@ -89,7 +89,7 @@ def git_identity():
 
 SYSTEM = f"""You are my live meeting companion. I'm a software developer (git identity: {git_identity()}). Most of my work is done with Claude Code, so I don't always remember the details of what "I" built.
 
-You get a raw local transcript of a meeting, in person or on a call, in two parts: the conversation since my last question (context), then the latest part, where what I need now most likely is. It mixes my voice and others', with no speaker labels and possible transcription errors. Use the earlier part to resolve references like "that ticket" or "the other approach", and to find tickets mentioned before. Decide what I need right now:
+You get a raw local transcript of a meeting, in person or on a call, in two parts: the conversation since my last question (context), then the latest part, where what I need now most likely is. On a call, lines are labeled [me] (my mic) or [them] (everyone else on the call, not told apart). In person there are no labels, so infer who is speaking. Expect transcription errors. Use the earlier part to resolve references like "that ticket" or "the other approach", and to find tickets mentioned before. Decide what I need right now:
 - Someone just asked me something: answer it.
 - Several questions in a row: answer the last one, plus one line for any earlier one still unanswered.
 - A follow-up to something said earlier: answer it, using the earlier context.
@@ -127,7 +127,7 @@ SUMMARY_PROMPT = """The meeting is over. Write my notes for it as markdown, with
 One line per topic discussed, with ticket keys.
 
 ### I committed to
-Follow-ups I said I'd do, from my own words in the transcripts (e.g. "I'll check after this"). Write "none" if there were none. Don't count what you suggested I say unless the transcript shows I said it.
+Follow-ups I said I'd do, from my own words in the transcripts (e.g. "I'll check after this"; on a call, only [me] lines). Write "none" if there were none. Don't count what you suggested I say unless the transcript shows I said it.
 
 ### Open questions
 Things raised that nobody could answer yet.
@@ -284,14 +284,26 @@ Latest comments:
 
 
 def transcribe(audio):
+    """Returns the kept segments as (start second, end second, text)."""
     result = mlx_whisper.transcribe(audio, path_or_hf_repo=WHISPER, condition_on_previous_text=False)
     # Whisper's own hallucination thresholds: looping text compresses too well, guesses score low
-    kept = [s["text"].strip() for s in result["segments"] if s["compression_ratio"] <= 2.4 and s["avg_logprob"] >= -1.0]
-    return " ".join(kept).strip()
+    return [(s["start"], s["end"], s["text"].strip()) for s in result["segments"]
+            if s["compression_ratio"] <= 2.4 and s["avg_logprob"] >= -1.0 and s["text"].strip()]
+
+
+def is_echo(line, others):
+    """On speakers the mic also hears the call: drop mic lines that system audio heard at the same moment."""
+    start, end, text = line
+    heard = {w for s, e, t in others if s < end + 1 and e > start - 1 for w in re.findall(r"\w+", t.lower())}
+    words = re.findall(r"\w+", text.lower())
+    return bool(words) and sum(w in heard for w in words) >= 0.6 * len(words)
 
 
 class Listener:
-    """Transcribes the mic in the background, cutting chunks at pauses.
+    """Transcribes the mic and system audio in the background, cutting chunks at pauses.
+
+    Once system audio is heard, each is transcribed on its own and labeled: the mic is me, system audio
+    is everyone on the call.
 
     All whisper calls happen on the worker thread: MLX streams are per-thread.
     Times are seconds of audio received, so the main thread can ask for "the last N seconds".
@@ -303,7 +315,8 @@ class Listener:
         self.segments = []  # (end second, text), the whole meeting; text is small
         self.lock = threading.Lock()
         self.received = 0
-        self.levels = collections.deque(maxlen=600)  # last minute of block loudness, for the noise floor
+        # last minute of block loudness per track (mic, system), for the noise floor
+        self.levels = (collections.deque(maxlen=600), collections.deque(maxlen=600))
         self.system = collections.deque(maxlen=5)  # bounded, so a lagging mic can't delay system audio
         self.system_heard = False
         self.ready = threading.Event()
@@ -311,13 +324,11 @@ class Listener:
         threading.Thread(target=self._run, daemon=True).start()
 
     def on_audio(self, indata, frames, time, status):
-        block = indata[:, 0].copy()
-        if self.system:
-            block += self.system.popleft()
-        self.audio.put(block)
+        silence = np.zeros(BLOCK, dtype=np.float32)
+        self.audio.put((indata[:, 0].copy(), self.system.popleft() if self.system else silence))
 
     def add_system_audio(self, stream):
-        """Mix a raw 16 kHz float32 stream into the mic, which stays the clock."""
+        """Add a raw 16 kHz float32 stream alongside the mic, which stays the clock."""
         def read():
             while data := stream.read(BLOCK * 4):
                 if len(data) == BLOCK * 4:
@@ -357,11 +368,13 @@ class Listener:
                 while not self.audio.empty():
                     blocks.append(self.audio.get_nowait())
 
-            for block in blocks:
-                pending.append(block)
+            for mic, system in blocks:
+                pending.append((mic, system))
                 self.received += 1
+                self.levels[0].append(float(np.sqrt(np.mean(mic**2))))
+                self.levels[1].append(float(np.sqrt(np.mean(system**2))))
+                block = mic + system  # pauses are judged on what everyone says
                 rms = float(np.sqrt(np.mean(block**2)))
-                self.levels.append(rms)
                 sumsq += float(np.sum(block**2))
                 level = np.sqrt(sumsq / (len(pending) * BLOCK))
                 quiet = quiet + 1 if rms < 0.3 * level else 0
@@ -376,18 +389,32 @@ class Listener:
     def _cut(self, pending):
         if not pending:
             return
-        floor = np.percentile(self.levels, 10)
-        loud = sum(np.sqrt(np.mean(b**2)) > max(SPEECH_RATIO * floor, 1e-3) for b in pending)
-        if loud < 5:
-            return
-        text = transcribe(np.concatenate(pending))
-        if not text:
-            return
+        start = self.now() - len(pending) * BLOCK / RATE
+        mic, system = (np.concatenate(track) for track in zip(*pending))
+        # Until system audio is heard (not on a call, or no permission yet) the mic hears everyone
+        tracks = {"me": (mic, 0), "them": (system, 1)} if self.system_heard else {"": (mic, 0)}
+        lines = {label: self._speech(audio, levels) for label, (audio, levels) in tracks.items()}
+        if "me" in lines:
+            lines["me"] = [line for line in lines["me"] if not is_echo(line, lines["them"])]
+
+        merged = []  # consecutive lines by the same side become one
+        for s, e, label, text in sorted((s, e, label, t) for label, found in lines.items() for s, e, t in found):
+            if merged and merged[-1][1] == label:
+                merged[-1] = (e, label, f"{merged[-1][2]} {text}")
+            else:
+                merged.append((e, label, text))
+        merged = [(start + e, f"[{label}] {text}" if label else text) for e, label, text in merged]
         with self.lock:
-            self.segments.append((self.now(), text))
-        if self.record_path:
+            self.segments.extend(merged)
+        if self.record_path and merged:
             with self.record_path.open("a") as f:
-                f.write(f"[{self.started + timedelta(seconds=self.now()):%H:%M:%S}] {text}\n")
+                f.writelines(f"[{self.started + timedelta(seconds=t):%H:%M:%S}] {text}\n" for t, text in merged)
+
+    def _speech(self, audio, levels):
+        """Transcribe one track, unless it has no speech above its noise floor."""
+        floor = np.percentile(self.levels[levels], 10)
+        loudness = np.sqrt(np.mean(audio.reshape(-1, BLOCK) ** 2, axis=1))
+        return transcribe(audio) if (loudness > max(SPEECH_RATIO * floor, 1e-3)).sum() >= 5 else []
 
 
 def ask(prompt, session_id, first, scope_text, dirs):
