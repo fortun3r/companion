@@ -5,7 +5,8 @@
 # ///
 """Push-to-talk meeting companion.
 
-Transcribes the conversation locally in the background. Press Enter to get a
+Transcribes the conversation locally in the background, from the mic and from whatever
+the Mac plays (so calls work on headphones). Press Enter to get a
 suggested answer from Claude for the latest question, with the earlier
 conversation as context, grounded in your code, git history, Claude Code
 transcripts, claude-mem (if installed), Jira and any brief in ~/.claude/briefs.
@@ -23,6 +24,7 @@ nested inside. Each is a path, or a folder name under $COMPANION_ROOT (default ~
   companion ~/work
   companion api web
   companion . --record     also save the full transcript next to the meeting notes
+  companion . --mic-only   don't capture what the Mac plays (calls, videos, music)
 """
 
 import base64
@@ -87,7 +89,7 @@ def git_identity():
 
 SYSTEM = f"""You are my live meeting companion. I'm a software developer (git identity: {git_identity()}). Most of my work is done with Claude Code, so I don't always remember the details of what "I" built.
 
-You get a raw local transcript of a face-to-face meeting in two parts: the conversation since my last question (context), then the latest part, where what I need now most likely is. It mixes my voice and others', with no speaker labels and possible transcription errors. Use the earlier part to resolve references like "that ticket" or "the other approach", and to find tickets mentioned before. Decide what I need right now:
+You get a raw local transcript of a meeting, in person or on a call, in two parts: the conversation since my last question (context), then the latest part, where what I need now most likely is. It mixes my voice and others', with no speaker labels and possible transcription errors. Use the earlier part to resolve references like "that ticket" or "the other approach", and to find tickets mentioned before. Decide what I need right now:
 - Someone just asked me something: answer it.
 - Several questions in a row: answer the last one, plus one line for any earlier one still unanswered.
 - A follow-up to something said earlier: answer it, using the earlier context.
@@ -116,7 +118,7 @@ Format, in the language of the question. I glance at this while someone is waiti
 - First line: the answer as I'd say it out loud, max 25 words. Plain text.
 - Then at most 3 bullets, each one line, max ~20 words: only the details I'd actually say next. No sub-bullets, headings or caveats nobody asked about.
 - It's printed raw in a terminal: no **bold** or other markdown emphasis. Backticks for code names are fine.
-- Last line: refs (ticket, PR, commit sha, file:line) in brackets.
+- End the first line and each bullet with the source of that line in brackets, so I can tell which claim comes from where: ticket, PR, commit sha, file:line, `session <date>` for a Claude Code session or claude-mem summary, `brief` for the brief. Several sources are comma-separated. A line with no source gets none.
 If you can't find it, say so in one line and suggest what I can say instead. Never invent details."""
 
 SUMMARY_PROMPT = """The meeting is over. Write my notes for it as markdown, with no preamble and no other text:
@@ -302,12 +304,28 @@ class Listener:
         self.lock = threading.Lock()
         self.received = 0
         self.levels = collections.deque(maxlen=600)  # last minute of block loudness, for the noise floor
+        self.system = collections.deque(maxlen=5)  # bounded, so a lagging mic can't delay system audio
+        self.system_heard = False
         self.ready = threading.Event()
         self.record_path, self.started = record_path, started
         threading.Thread(target=self._run, daemon=True).start()
 
     def on_audio(self, indata, frames, time, status):
-        self.audio.put(indata[:, 0].copy())
+        block = indata[:, 0].copy()
+        if self.system:
+            block += self.system.popleft()
+        self.audio.put(block)
+
+    def add_system_audio(self, stream):
+        """Mix a raw 16 kHz float32 stream into the mic, which stays the clock."""
+        def read():
+            while data := stream.read(BLOCK * 4):
+                if len(data) == BLOCK * 4:
+                    block = np.frombuffer(data, dtype=np.float32)
+                    self.system_heard = self.system_heard or bool(block.any())
+                    self.system.append(block)
+
+        threading.Thread(target=read, daemon=True).start()
 
     def now(self):
         return self.received * BLOCK / RATE
@@ -463,7 +481,8 @@ class AnswerPrinter:
                                 break_long_words=False, break_on_hyphens=False).replace(" ", " ")
         wrapped = re.sub(r"^(  • )([^:`\n]{1,30}):", rf"\1{BOLD}\2:{RESET}", wrapped)  # "Gate: ..." labels
         wrapped = re.sub(r"`([^`]+)`", rf"{self.CODE}\1{self.CODE_END}", wrapped)
-        print(f"{style}{wrapped}{RESET if style else ''}", flush=True)
+        wrapped = re.sub(r"(\s)(\[[^\[\]]+\])$", rf"\1{RESET}{DIM}\2", wrapped)  # trailing source
+        print(f"{style}{wrapped}{RESET}", flush=True)
 
 
 def log_exchange(notes, title, question, answer):
@@ -490,6 +509,21 @@ def as_text(segments):
     return " ".join(s for _, s in segments)
 
 
+def start_system_audio():
+    """Build the capture helper if needed and start it. Returns None, after saying why, if it can't run."""
+    source, helper = HERE / "system_audio.swift", HERE / ".system_audio"
+    if not helper.exists() or helper.stat().st_mtime < source.stat().st_mtime:
+        if not shutil.which("swiftc"):
+            print(f"{BOLD}system audio off:{RESET} needs swiftc (xcode-select --install). Using the mic only.")
+            return None
+        print(f"{DIM}building system audio capture…{RESET}")
+        build = subprocess.run(["swiftc", "-O", source, "-o", helper], capture_output=True, text=True)
+        if build.returncode:
+            print(f"{BOLD}system audio off:{RESET} build failed (needs macOS 14.2+). Using the mic only.\n{build.stderr[-500:]}")
+            return None
+    return subprocess.Popen([helper], stdin=subprocess.PIPE, stdout=subprocess.PIPE)  # it exits when stdin closes
+
+
 def conversation_prompt(listener, sent_upto, seconds, focus):
     """Split the transcript into what's new since the last question and the latest `seconds`."""
     now = listener.now()
@@ -512,7 +546,8 @@ def main():
         print(__doc__.strip())
         return
     record = "--record" in sys.argv
-    args = [a for a in sys.argv[1:] if a != "--record"]
+    mic_only = "--mic-only" in sys.argv
+    args = [a for a in sys.argv[1:] if a not in ("--record", "--mic-only")]
     if unknown := [a for a in args if a.startswith("-")]:
         sys.exit(f"unknown option: {' '.join(unknown)} (see companion --help)")
     scope_text, dirs = scope_context([resolve(a) for a in args] or [Path.cwd()])
@@ -536,6 +571,10 @@ def main():
     print(f"{DIM}loading whisper…{RESET}")
     listener = Listener(transcript, started)
     listener.ready.wait()
+    system_audio = None if mic_only else start_system_audio()
+    if system_audio:
+        listener.add_system_audio(system_audio.stdout)
+    print(f"{DIM}hearing: mic{' + system audio' if system_audio else ''}{RESET}")
 
     session_id = str(uuid.uuid4())
     first = True
@@ -558,6 +597,9 @@ def main():
                 if listener.received == 0:
                     print("no audio captured. Check the mic permission for this terminal app in System Settings › Privacy › Microphone.")
                     continue
+                if system_audio and not listener.system_heard:
+                    print(f"{DIM}system audio has been silent so far. If a call is playing, allow this terminal app in "
+                          f"System Settings › Privacy & Security › Screen & System Audio Recording.{RESET}")
                 seconds = int(cmd) if cmd.isdigit() else WINDOW
                 focus = "" if cmd.isdigit() else cmd
                 prompt, latest = conversation_prompt(listener, sent_upto, seconds, focus)

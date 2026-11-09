@@ -10,7 +10,7 @@ When you ship across many repos and tickets, the specifics blur: which PR, which
 
 ## Requirements
 
-- macOS on Apple Silicon (transcription uses [mlx-whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper))
+- macOS on Apple Silicon (transcription uses [mlx-whisper](https://github.com/ml-explore/mlx-examples/tree/main/whisper)). macOS 14.2+ and Xcode Command Line Tools to hear calls on headphones; without them it uses the mic only.
 - [uv](https://docs.astral.sh/uv/)
 - [Claude Code](https://docs.claude.com/en/docs/claude-code), logged in (`claude` on your PATH). Answers use your existing Claude subscription or API key.
 - Optional: [`gh`](https://cli.github.com/), logged in, for PR lookups
@@ -53,6 +53,14 @@ It transcribes the conversation in the background, cutting at pauses. When you p
 Follow-up questions keep the context from earlier ones. Most audio is already transcribed when you press Enter, so the answer starts right away.
 
 The transcript stays in memory. Pass `--record` to also save it next to the meeting notes, as `<date>-<time>-<scope>-transcript.md`. Then the summary covers the whole meeting, not just the parts around your questions.
+
+### Calls and headphones
+
+It hears the mic and everything the Mac plays, so the other person on a call is captured even on headphones, with no virtual audio driver and no output settings to change. The first run compiles a small helper (`system_audio.swift`, a Core Audio process tap), and startup shows `hearing: mic + system audio`.
+
+macOS needs your terminal app allowed under System Settings › Privacy & Security › Screen & System Audio Recording. Until then, capture is silent, and the companion tells you on Enter.
+
+System audio means all of it, including videos and music. In a face-to-face meeting, use `companion . --mic-only`.
 
 ### Scope
 
@@ -182,9 +190,9 @@ With Jira connected:
 
 ## Privacy and etiquette
 
-- Audio never leaves your machine. **Transcript text** is sent to Claude on each Enter: the conversation since your last question, max 10 min, plus any Jira tickets fetched. When you quit, whatever was said since your last question is sent for the summary.
+- Audio never leaves your machine, whether from the mic or from system audio. **Transcript text** is sent to Claude on each Enter: the conversation since your last question, max 10 min, plus any Jira tickets fetched. When you quit, whatever was said since your last question is sent for the summary.
 - The full transcript is only kept in memory unless you pass `--record`. Meeting notes, which include what other people said around your questions, are stored as plain markdown in `~/.claude/meetings/`. Treat them like any meeting notes you'd keep.
-- It transcribes everyone in the room. Recording or transcribing people without their consent is illegal in some places, and your employer may have its own rules. Check before using it.
+- It transcribes everyone in the room and everyone on the call. Recording or transcribing people without their consent is illegal in some places, and your employer may have its own rules. Check before using it.
 - It doesn't tell speakers apart. Claude infers which question was aimed at you, and sometimes gets it wrong.
 - Answers come from your history, but they can still be wrong. Check the refs before repeating something important.
 
