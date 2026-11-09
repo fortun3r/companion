@@ -319,6 +319,7 @@ class Listener:
         self.levels = (collections.deque(maxlen=600), collections.deque(maxlen=600))
         self.system = collections.deque(maxlen=5)  # bounded, so a lagging mic can't delay system audio
         self.system_heard = False
+        self.live, self.preview = False, ""  # preview: rough text of the chunk still being heard
         self.ready = threading.Event()
         self.record_path, self.started = record_path, started
         threading.Thread(target=self._run, daemon=True).start()
@@ -354,7 +355,7 @@ class Listener:
     def _run(self):
         transcribe(np.zeros(RATE, dtype=np.float32))
         self.ready.set()
-        pending, quiet, sumsq = [], 0, 0.0
+        pending, quiet, sumsq, previewed = [], 0, 0.0, 0
         while True:
             try:
                 blocks = [self.audio.get(timeout=0.1)]
@@ -382,7 +383,13 @@ class Listener:
             seconds = len(pending) * BLOCK / RATE
             if done or seconds >= MAX_CHUNK or (seconds >= MIN_CHUNK and quiet >= PAUSE_BLOCKS):
                 self._cut(pending)
-                pending, quiet, sumsq = [], 0, 0.0
+                pending, quiet, sumsq, previewed = [], 0, 0.0, 0
+            # ponytail: re-transcribes the whole pending chunk every 2s (~1s of work at 30s); skipped when behind
+            elif self.live and len(pending) - previewed >= 20 and self.audio.qsize() < 5:
+                previewed = len(pending)
+                mic, system = (np.concatenate(track) for track in zip(*pending))
+                if self._loud(mic, 0) or self._loud(system, 1):
+                    self.preview = " ".join(t for *_, t in transcribe(mic + system))
             if done:
                 done.set()
 
@@ -406,15 +413,25 @@ class Listener:
         merged = [(start + e, f"[{label}] {text}" if label else text) for e, label, text in merged]
         with self.lock:
             self.segments.extend(merged)
+            self.preview = ""
         if self.record_path and merged:
             with self.record_path.open("a") as f:
                 f.writelines(f"[{self.started + timedelta(seconds=t):%H:%M:%S}] {text}\n" for t, text in merged)
 
-    def _speech(self, audio, levels):
-        """Transcribe one track, unless it has no speech above its noise floor."""
+    def _loud(self, audio, levels):
+        """Whether a track has 0.5s+ of speech above its noise floor."""
         floor = np.percentile(self.levels[levels], 10)
         loudness = np.sqrt(np.mean(audio.reshape(-1, BLOCK) ** 2, axis=1))
-        return transcribe(audio) if (loudness > max(SPEECH_RATIO * floor, 1e-3)).sum() >= 5 else []
+        return (loudness > max(SPEECH_RATIO * floor, 1e-3)).sum() >= 5
+
+    def _speech(self, audio, levels):
+        return transcribe(audio) if self._loud(audio, levels) else []
+
+    def tail(self, words=50):
+        """The last words heard, including the rough text of the chunk in progress."""
+        with self.lock:
+            text = " ".join([s for _, s in self.segments[-20:]] + [self.preview])
+        return " ".join(text.split()[-words:])
 
 
 def ask(prompt, session_id, first, scope_text, dirs):
@@ -551,6 +568,31 @@ def start_system_audio():
     return subprocess.Popen([helper], stdin=subprocess.PIPE, stdout=subprocess.PIPE)  # it exits when stdin closes
 
 
+LIVE_LINES = 3
+
+
+def live_lines(listener):
+    width = min(shutil.get_terminal_size().columns, 100) - 2
+    lines = textwrap.wrap(listener.tail(), width)[-LIVE_LINES:]
+    return [""] * (LIVE_LINES - len(lines)) + lines
+
+
+def show_live(listener, idle, lock):
+    """Keep the lines above the prompt showing the last words heard, while waiting for input."""
+    shown = None
+    while True:
+        idle.wait()
+        lines = live_lines(listener)
+        with lock:
+            if idle.is_set() and lines != shown:
+                # save cursor, go up to the live lines, rewrite them, back to where the user is typing
+                out = "".join(f"\r\033[2K{DIM}{line}{RESET}\033[1B" for line in lines)
+                sys.stdout.write(f"\0337\033[{LIVE_LINES}A{out}\0338")
+                sys.stdout.flush()
+                shown = lines
+        threading.Event().wait(0.5)
+
+
 def conversation_prompt(listener, sent_upto, seconds, focus):
     """Split the transcript into what's new since the last question and the latest `seconds`."""
     now = listener.now()
@@ -606,13 +648,23 @@ def main():
     session_id = str(uuid.uuid4())
     first = True
     sent_upto = 0.0  # audio second up to which the conversation has been sent to Claude
+    listener.live = sys.stdout.isatty()
+    idle, lock = threading.Event(), threading.Lock()
+    if listener.live:
+        threading.Thread(target=show_live, args=(listener, idle, lock), daemon=True).start()
     with sd.InputStream(samplerate=RATE, channels=1, dtype="float32", blocksize=BLOCK, callback=listener.on_audio):
         print(f"{BOLD}listening.{RESET} Enter = answer · '60' = last 60s · 'text' = focus · '? question' = typed · q = quit")
         while True:
+            if listener.live:
+                print("\n".join(f"{DIM}{line}{RESET}" for line in live_lines(listener)))
+                idle.set()
             try:
                 cmd = input("> ").strip()
             except (EOFError, KeyboardInterrupt):
                 break
+            finally:
+                with lock:
+                    idle.clear()
             if cmd == "q":
                 break
 

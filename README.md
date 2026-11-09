@@ -38,6 +38,8 @@ The first run takes a few minutes: uv sets up Python and the dependencies (~150 
 | `? why did we drop redis` | ask a typed question, no audio |
 | `q` | quit, and write the meeting summary |
 
+Above the prompt, the last ~50 words heard update live, a second or two behind, so you can see when the question is finished before pressing Enter.
+
 ### What it answers
 
 It transcribes the conversation in the background, cutting at pauses. When you press Enter, Claude gets two parts: the conversation since your last question, as context, and the latest ~20s, where the question most likely is. The earlier part resolves "that ticket" or "so why not the other approach?", and ticket keys mentioned minutes ago still get looked up.
