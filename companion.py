@@ -319,7 +319,9 @@ class Listener:
         self.levels = (collections.deque(maxlen=600), collections.deque(maxlen=600))
         self.system = collections.deque(maxlen=5)  # bounded, so a lagging mic can't delay system audio
         self.system_heard = False
-        self.live, self.preview = False, []  # preview: rough segments of the chunk still being heard
+        self.live = False
+        # Live captions only grow, like a call's captions: [label, words] turns, plus the words still in flux
+        self.captions, self.tentative, self.shown, self.last_preview = [], [], {}, {}
         self.ready = threading.Event()
         self.record_path, self.started = record_path, started
         threading.Thread(target=self._run, daemon=True).start()
@@ -385,9 +387,9 @@ class Listener:
                 self._cut(pending)
                 pending, quiet, sumsq, previewed = [], 0, 0.0, 0
             # ponytail: re-transcribes the whole pending chunk every 2s (~1s of work at 30s); skipped when behind
-            elif self.live and len(pending) - previewed >= 20 and self.audio.qsize() < 5:
+            elif self.live and len(pending) - previewed >= max(10, len(pending) // 10) and self.audio.qsize() < 5:
                 previewed = len(pending)
-                self.preview = self._transcribe(pending)
+                self._update_captions(self._transcribe(pending), final=False)
             if done:
                 done.set()
 
@@ -395,7 +397,8 @@ class Listener:
         merged = self._transcribe(pending) if pending else []
         with self.lock:
             self.segments.extend(merged)
-            self.preview = []
+        if self.live:
+            self._update_captions(merged, final=True)
         if self.record_path and merged:
             with self.record_path.open("a") as f:
                 f.writelines(f"[{self.started + timedelta(seconds=t):%H:%M:%S}] {as_text([(t, label, text)])}\n"
@@ -427,10 +430,45 @@ class Listener:
     def _speech(self, audio, levels):
         return transcribe(audio) if self._loud(audio, levels) else []
 
-    def recent_turns(self):
-        """The last turns heard, including the rough text of the chunk in progress."""
+    def _update_captions(self, segments, final):
+        """A word is shown for good once two previews of the chunk agree on it, or the chunk ends.
+
+        ponytail: assumes the final text starts with the words already shown; if whisper changes its mind
+        about them, a word can be doubled or skipped in the captions (never in the transcript sent to Claude).
+        """
+        heard = {}
+        for _, label, text in segments:
+            heard.setdefault(label, []).extend(text.split())
+        norm = lambda word: re.sub(r"\W", "", word.lower())
         with self.lock:
-            return turns(self.segments[-20:] + self.preview)
+            for label, words in heard.items():
+                previous = self.last_preview.get(label, [])
+                agreed = next((i for i, (a, b) in enumerate(zip(words, previous)) if norm(a) != norm(b)),
+                              min(len(words), len(previous)))
+                stable, done = len(words) if final else agreed, self.shown.get(label, 0)
+                if stable > done:
+                    if self.captions and self.captions[-1][0] == label:
+                        self.captions[-1][1].extend(words[done:stable])
+                    else:
+                        self.captions.append([label, words[done:stable]])
+                    del self.captions[:-20]
+                    self.shown[label] = stable
+            if final:
+                self.shown, self.last_preview, self.tentative = {}, {}, []
+            else:
+                self.last_preview = heard
+                self.tentative = [(label, words[self.shown.get(label, 0):]) for label, words in heard.items()]
+
+    def caption_turns(self):
+        """The last caption turns as (label, settled words, words still in flux)."""
+        with self.lock:
+            out = [(label, list(words), []) for label, words in self.captions[-10:]]
+            for label, words in self.tentative:
+                if out and out[-1][0] == label:
+                    out[-1] = (label, out[-1][1], words)
+                elif words:
+                    out.append((label, [], words))
+        return out
 
 
 def ask(prompt, session_id, first, scope_text, dirs):
@@ -585,14 +623,21 @@ SPEAKER = {"me": "\033[36m", "them": "\033[33m"}
 
 
 def live_lines(listener):
-    """The last turns, one block per speaker, with the oldest lines dropped from the top."""
+    """Captions: one block per speaker turn, settled words bright, words still in flux dim, oldest lines off the top."""
     width = min(shutil.get_terminal_size().columns, 100) - 2
     lines = []
-    for label, text in listener.recent_turns():
+    for label, settled, tentative in listener.caption_turns():
         prefix = f"{label:>4}  " if label else ""
-        wrapped = textwrap.wrap(text, width - len(prefix))
-        lines += [(SPEAKER[label] + prefix + RESET if i == 0 and label else " " * len(prefix)) + DIM + line + RESET
-                  for i, line in enumerate(wrapped)]
+        rows, row, used = [], [], 0
+        for i, word in enumerate(settled + tentative):
+            if row and used + 1 + len(word) > width - len(prefix):
+                rows.append(row)
+                row, used = [], 0
+            used += len(word) + (1 if row else 0)
+            row.append(word if i < len(settled) else f"{DIM}{word}{RESET}")
+        rows.append(row)
+        lines += [(SPEAKER[label] + prefix + RESET if i == 0 and label else " " * len(prefix)) + " ".join(row)
+                  for i, row in enumerate(rows) if row]
     return [""] * (LIVE_LINES - len(lines[-LIVE_LINES:])) + lines[-LIVE_LINES:]
 
 
