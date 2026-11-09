@@ -54,7 +54,7 @@ It transcribes the conversation in the background, cutting at pauses. When you p
 
 Follow-up questions keep the context from earlier ones. Most audio is already transcribed when you press Enter, so the answer starts right away.
 
-The transcript stays in memory. Pass `--record` to also save it next to the meeting notes, as `<date>-<time>-<scope>-transcript.md`. Then the summary covers the whole meeting, not just the parts around your questions.
+The full transcript is saved as it's heard next to the meeting notes, as `<date>-<time>-<scope>-transcript.md`, one line per turn with the time and `[me]`/`[them]`. The summary on quit covers the whole meeting, not just the parts around your questions. Pass `--no-record` to keep the transcript in memory only.
 
 ### Calls and headphones
 
@@ -195,7 +195,7 @@ With Jira connected:
 ## Privacy and etiquette
 
 - Audio never leaves your machine, whether from the mic or from system audio. **Transcript text** is sent to Claude on each Enter: the conversation since your last question, max 10 min, plus any Jira tickets fetched. When you quit, whatever was said since your last question is sent for the summary.
-- The full transcript is only kept in memory unless you pass `--record`. Meeting notes, which include what other people said around your questions, are stored as plain markdown in `~/.claude/meetings/`. Treat them like any meeting notes you'd keep.
+- The full transcript, including everything other people said, is saved as plain markdown in `~/.claude/meetings/`, next to the meeting notes. Treat both like any meeting notes you'd keep, or pass `--no-record` to keep the transcript in memory only.
 - It transcribes everyone in the room and everyone on the call. Recording or transcribing people without their consent is illegal in some places, and your employer may have its own rules. Check before using it.
 - On a call it only knows `[me]` from `[them]`, not one person on the call from another. In person it doesn't tell anyone apart, so Claude infers who asked what, and sometimes gets it wrong.
 - Answers come from your history, but they can still be wrong. Check the refs before repeating something important.

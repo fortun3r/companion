@@ -23,7 +23,7 @@ nested inside. Each is a path, or a folder name under $COMPANION_ROOT (default ~
   companion my-app
   companion ~/work
   companion api web
-  companion . --record     also save the full transcript next to the meeting notes
+  companion . --no-record  don't save the full transcript next to the meeting notes
   companion . --mic-only   don't capture what the Mac plays (calls, videos, music)
 """
 
@@ -678,9 +678,9 @@ def main():
     if {"-h", "--help"} & set(sys.argv[1:]):
         print(__doc__.strip())
         return
-    record = "--record" in sys.argv
+    record = "--no-record" not in sys.argv  # --record is the default, still accepted
     mic_only = "--mic-only" in sys.argv
-    args = [a for a in sys.argv[1:] if a not in ("--record", "--mic-only")]
+    args = [a for a in sys.argv[1:] if a not in ("--record", "--no-record", "--mic-only")]
     if unknown := [a for a in args if a.startswith("-")]:
         sys.exit(f"unknown option: {' '.join(unknown)} (see companion --help)")
     scope_text, dirs = scope_context([resolve(a) for a in args] or [Path.cwd()])
