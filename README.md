@@ -86,6 +86,16 @@ A scope expands to:
 
 Claude can only open files inside the scope.
 
+### Meeting context
+
+Tell it what the meeting is about:
+
+```bash
+companion . --about "Sprint planning for the API with Ana (PM) and Joe (QA). Discussing ABC-123 and the backup job."
+```
+
+Claude gets it with every question, so vague references resolve to the right thing and it searches the right places first. Whisper gets it too, as a hint, so names and jargon come out spelled right. One or two sentences is plenty.
+
 ### Briefs
 
 The newest markdown file in `~/.claude/briefs/` is included in every request. Write a short "what I did this week and why" there before a meeting (or have Claude Code write it). Answers get faster and better, because Claude needs fewer searches.

@@ -23,6 +23,8 @@ nested inside. Each is a path, or a folder name under $COMPANION_ROOT (default ~
   companion my-app
   companion ~/work
   companion api web
+  companion . --about "sprint planning with Ana, SA-3424"
+                           what the meeting is about: sharper answers, better spelled names
   companion . --no-record  don't save the full transcript next to the meeting notes
   companion . --mic-only   don't capture what the Mac plays (calls, videos, music)
 """
@@ -283,12 +285,19 @@ Latest comments:
 {chr(10).join(comments) or "none"}"""
 
 
-def transcribe(audio):
-    """Returns the kept segments as (start second, end second, text)."""
-    result = mlx_whisper.transcribe(audio, path_or_hf_repo=WHISPER, condition_on_previous_text=False)
+def transcribe(audio, hint=None):
+    """Returns the kept segments as (start second, end second, text).
+
+    The hint (what the meeting is about) helps whisper spell names and jargon; chunks are under 30s, so it
+    applies to the whole chunk. On near-silence whisper can repeat the hint back, so those segments are dropped.
+    """
+    result = mlx_whisper.transcribe(audio, path_or_hf_repo=WHISPER, condition_on_previous_text=False,
+                                    initial_prompt=hint or None)
+    norm = lambda text: re.sub(r"\W+", " ", text.lower()).strip()
     # Whisper's own hallucination thresholds: looping text compresses too well, guesses score low
     return [(s["start"], s["end"], s["text"].strip()) for s in result["segments"]
-            if s["compression_ratio"] <= 2.4 and s["avg_logprob"] >= -1.0 and s["text"].strip()]
+            if s["compression_ratio"] <= 2.4 and s["avg_logprob"] >= -1.0 and norm(s["text"])
+            and not (hint and norm(s["text"]) in norm(hint))]
 
 
 def is_echo(line, others):
@@ -319,7 +328,7 @@ class Listener:
         self.levels = (collections.deque(maxlen=600), collections.deque(maxlen=600))
         self.system = collections.deque(maxlen=5)  # bounded, so a lagging mic can't delay system audio
         self.system_heard = False
-        self.live = False
+        self.live, self.about = False, ""
         # Live captions only grow, like a call's captions: [label, words] turns, plus the words still in flux
         self.captions, self.tentative, self.shown, self.last_preview = [], [], {}, {}
         self.ready = threading.Event()
@@ -428,7 +437,7 @@ class Listener:
         return (loudness > max(SPEECH_RATIO * floor, 1e-3)).sum() >= 5
 
     def _speech(self, audio, levels):
-        return transcribe(audio) if self._loud(audio, levels) else []
+        return transcribe(audio, self.about) if self._loud(audio, levels) else []
 
     def _update_captions(self, segments, final):
         """A word is shown for good once two previews of the chunk agree on it, or the chunk ends.
@@ -678,12 +687,21 @@ def main():
     if {"-h", "--help"} & set(sys.argv[1:]):
         print(__doc__.strip())
         return
+    about = ""
+    if "--about" in sys.argv:
+        i = sys.argv.index("--about")
+        if i + 1 >= len(sys.argv) or sys.argv[i + 1].startswith("-"):
+            sys.exit('--about needs a description, e.g. --about "sprint planning with Ana"')
+        about = sys.argv[i + 1]
+        del sys.argv[i:i + 2]
     record = "--no-record" not in sys.argv  # --record is the default, still accepted
     mic_only = "--mic-only" in sys.argv
     args = [a for a in sys.argv[1:] if a not in ("--record", "--no-record", "--mic-only")]
     if unknown := [a for a in args if a.startswith("-")]:
         sys.exit(f"unknown option: {' '.join(unknown)} (see companion --help)")
     scope_text, dirs = scope_context([resolve(a) for a in args] or [Path.cwd()])
+    if about:
+        scope_text += f"\n\nWhat this meeting is about, in my words: {about}"
     summary = [line for line in scope_text.splitlines() if line.startswith(("- Repos", "- claude-mem"))]
     print(DIM + "\n".join(summary) + RESET)
 
@@ -703,6 +721,7 @@ def main():
 
     print(f"{DIM}loading whisper…{RESET}")
     listener = Listener(transcript, started)
+    listener.about = about
     listener.ready.wait()
     system_audio = None if mic_only else start_system_audio()
     if system_audio:
