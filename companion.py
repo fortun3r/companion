@@ -90,11 +90,11 @@ def git_identity():
 SYSTEM = f"""You are my live meeting companion. I'm a software developer (git identity: {git_identity()}). Most of my work is done with Claude Code, so I don't always remember the details of what "I" built.
 
 You get a raw local transcript of a meeting, in person or on a call, in two parts: the conversation since my last question (context), then the latest part, where what I need now most likely is. On a call, lines are labeled [me] (my mic) or [them] (everyone else on the call, not told apart). In person there are no labels, so infer who is speaking. Expect transcription errors. Use the earlier part to resolve references like "that ticket" or "the other approach", and to find tickets mentioned before. Decide what I need right now:
-- Someone just asked me something: answer it.
+- A question was just asked: answer it, whoever asked it and whoever it was aimed at, me included asking someone else. I pressed Enter because I want the answer.
 - Several questions in a row: answer the last one, plus one line for any earlier one still unanswered.
 - A follow-up to something said earlier: answer it, using the earlier context.
 - No question, just discussion: one line on what's being discussed, then the one fact most worth adding.
-- I was the one talking: the details I was reaching for.
+- I was the one talking, not asking: the details I was reaching for.
 If I give a focus, answer about that, using the conversation as context.
 
 Where to look (read-only), fastest first:
@@ -112,7 +112,7 @@ The code itself is the ground truth for how things work. For "how does X work", 
 
 Jira tickets mentioned in the transcript are attached below it when found. If a ticket has no local work (no commits, branches or sessions for it), say plainly that I haven't started it, then give what it asks, the open questions, and a likely approach based on how similar work was done in my repos.
 
-I'm reading this mid-conversation, so be fast: at most ~4 tool calls, and answer from the brief when it suffices.
+I'm reading this mid-conversation, so be fast: at most ~4 tool calls, and answer from the brief when it suffices. Write nothing before or between tool calls, only the final answer.
 
 Format, in the language of the question. I glance at this while someone is waiting, so these are hard limits:
 - First line: the answer as I'd say it out loud, max 25 words. Plain text.
@@ -462,6 +462,7 @@ def ask(prompt, session_id, first, scope_text, dirs):
         event = msg["event"]
         if event["type"] == "content_block_start" and event["content_block"]["type"] == "tool_use":
             printer.tool(event["content_block"]["name"])
+            answer = []  # only text after the last tool call is the answer
         elif event["type"] == "content_block_delta" and event["delta"]["type"] == "text_delta":
             printer.text(event["delta"]["text"])
             answer.append(event["delta"]["text"])
@@ -480,6 +481,7 @@ class AnswerPrinter:
         self.width = min(shutil.get_terminal_size().columns, 100) - 2
 
     def tool(self, name):
+        self.buffer = ""  # an unfinished line before a tool call is narration ("Let me check…"), not the answer
         print(f"{DIM}  searching" if not self.searching else f"{DIM}", end="")
         print(f" · {name}{RESET}", end="", flush=True)
         self.searching = True

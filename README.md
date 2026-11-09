@@ -46,11 +46,11 @@ It transcribes the conversation in the background, cutting at pauses. When you p
 
 | What just happened | What you get |
 |---|---|
-| Someone asked you something | The answer |
+| A question was asked, to you or anyone else | The answer |
 | Several questions in a row | The last one answered, plus a line for any still open |
 | A follow-up to something from earlier | The answer, using the earlier context |
 | No question, just discussion | What's being discussed, and the one fact worth adding |
-| You were the one talking | The details you were reaching for |
+| You were the one talking, not asking | The details you were reaching for |
 
 Follow-up questions keep the context from earlier ones. Most audio is already transcribed when you press Enter, so the answer starts right away.
 
