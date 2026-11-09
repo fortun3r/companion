@@ -312,14 +312,14 @@ class Listener:
     def __init__(self, record_path=None, started=None):
         self.audio = queue.Queue()
         self.flushes = queue.Queue()
-        self.segments = []  # (end second, text), the whole meeting; text is small
+        self.segments = []  # (end second, "me" / "them" / "" when unlabeled, text), the whole meeting
         self.lock = threading.Lock()
         self.received = 0
         # last minute of block loudness per track (mic, system), for the noise floor
         self.levels = (collections.deque(maxlen=600), collections.deque(maxlen=600))
         self.system = collections.deque(maxlen=5)  # bounded, so a lagging mic can't delay system audio
         self.system_heard = False
-        self.live, self.preview = False, ""  # preview: rough text of the chunk still being heard
+        self.live, self.preview = False, []  # preview: rough segments of the chunk still being heard
         self.ready = threading.Event()
         self.record_path, self.started = record_path, started
         threading.Thread(target=self._run, daemon=True).start()
@@ -350,7 +350,7 @@ class Listener:
 
     def text(self, start, end=float("inf")):
         with self.lock:
-            return [(t, s) for t, s in self.segments if start < t <= end]
+            return [seg for seg in self.segments if start < seg[0] <= end]
 
     def _run(self):
         transcribe(np.zeros(RATE, dtype=np.float32))
@@ -387,15 +387,21 @@ class Listener:
             # ponytail: re-transcribes the whole pending chunk every 2s (~1s of work at 30s); skipped when behind
             elif self.live and len(pending) - previewed >= 20 and self.audio.qsize() < 5:
                 previewed = len(pending)
-                mic, system = (np.concatenate(track) for track in zip(*pending))
-                if self._loud(mic, 0) or self._loud(system, 1):
-                    self.preview = " ".join(t for *_, t in transcribe(mic + system))
+                self.preview = self._transcribe(pending)
             if done:
                 done.set()
 
     def _cut(self, pending):
-        if not pending:
-            return
+        merged = self._transcribe(pending) if pending else []
+        with self.lock:
+            self.segments.extend(merged)
+            self.preview = []
+        if self.record_path and merged:
+            with self.record_path.open("a") as f:
+                f.writelines(f"[{self.started + timedelta(seconds=t):%H:%M:%S}] {as_text([(t, label, text)])}\n"
+                             for t, label, text in merged)
+
+    def _transcribe(self, pending):
         start = self.now() - len(pending) * BLOCK / RATE
         mic, system = (np.concatenate(track) for track in zip(*pending))
         # Until system audio is heard (not on a call, or no permission yet) the mic hears everyone
@@ -410,13 +416,7 @@ class Listener:
                 merged[-1] = (e, label, f"{merged[-1][2]} {text}")
             else:
                 merged.append((e, label, text))
-        merged = [(start + e, f"[{label}] {text}" if label else text) for e, label, text in merged]
-        with self.lock:
-            self.segments.extend(merged)
-            self.preview = ""
-        if self.record_path and merged:
-            with self.record_path.open("a") as f:
-                f.writelines(f"[{self.started + timedelta(seconds=t):%H:%M:%S}] {text}\n" for t, text in merged)
+        return [(start + e, label, text) for e, label, text in merged]
 
     def _loud(self, audio, levels):
         """Whether a track has 0.5s+ of speech above its noise floor."""
@@ -427,11 +427,10 @@ class Listener:
     def _speech(self, audio, levels):
         return transcribe(audio) if self._loud(audio, levels) else []
 
-    def tail(self, words=50):
-        """The last words heard, including the rough text of the chunk in progress."""
+    def recent_turns(self):
+        """The last turns heard, including the rough text of the chunk in progress."""
         with self.lock:
-            text = " ".join([s for _, s in self.segments[-20:]] + [self.preview])
-        return " ".join(text.split()[-words:])
+            return turns(self.segments[-20:] + self.preview)
 
 
 def ask(prompt, session_id, first, scope_text, dirs):
@@ -549,8 +548,19 @@ def summarize(notes, title, prompt, session_id, first, scope_text, dirs):
     notes.write_text(f"# {title}\n\n{summary}\n\n---\n{exchanges}")
 
 
+def turns(segments):
+    """Merge consecutive segments by the same side into [label, text] turns."""
+    merged = []
+    for _, label, text in segments:
+        if merged and merged[-1][0] == label:
+            merged[-1][1] += " " + text
+        else:
+            merged.append([label, text])
+    return merged
+
+
 def as_text(segments):
-    return " ".join(s for _, s in segments)
+    return "\n".join(f"[{label}] {text}" if label else text for label, text in turns(segments))
 
 
 def start_system_audio():
@@ -568,13 +578,20 @@ def start_system_audio():
     return subprocess.Popen([helper], stdin=subprocess.PIPE, stdout=subprocess.PIPE)  # it exits when stdin closes
 
 
-LIVE_LINES = 3
+LIVE_LINES = 4
+SPEAKER = {"me": "\033[36m", "them": "\033[33m"}
 
 
 def live_lines(listener):
+    """The last turns, one block per speaker, with the oldest lines dropped from the top."""
     width = min(shutil.get_terminal_size().columns, 100) - 2
-    lines = textwrap.wrap(listener.tail(), width)[-LIVE_LINES:]
-    return [""] * (LIVE_LINES - len(lines)) + lines
+    lines = []
+    for label, text in listener.recent_turns():
+        prefix = f"{label:>4}  " if label else ""
+        wrapped = textwrap.wrap(text, width - len(prefix))
+        lines += [(SPEAKER[label] + prefix + RESET if i == 0 and label else " " * len(prefix)) + DIM + line + RESET
+                  for i, line in enumerate(wrapped)]
+    return [""] * (LIVE_LINES - len(lines[-LIVE_LINES:])) + lines[-LIVE_LINES:]
 
 
 def show_live(listener, idle, lock):
@@ -586,7 +603,7 @@ def show_live(listener, idle, lock):
         with lock:
             if idle.is_set() and lines != shown:
                 # save cursor, go up to the live lines, rewrite them, back to where the user is typing
-                out = "".join(f"\r\033[2K{DIM}{line}{RESET}\033[1B" for line in lines)
+                out = "".join(f"\r\033[2K{line}\033[1B" for line in lines)
                 sys.stdout.write(f"\0337\033[{LIVE_LINES}A{out}\0338")
                 sys.stdout.flush()
                 shown = lines
@@ -656,7 +673,7 @@ def main():
         print(f"{BOLD}listening.{RESET} Enter = answer · '60' = last 60s · 'text' = focus · '? question' = typed · q = quit")
         while True:
             if listener.live:
-                print("\n".join(f"{DIM}{line}{RESET}" for line in live_lines(listener)))
+                print("\n".join(live_lines(listener)))
                 idle.set()
             try:
                 cmd = input("> ").strip()
@@ -687,7 +704,7 @@ def main():
                     continue
                 sent_upto = listener.now()
                 print(f"{DIM}heard: {latest}{RESET}\n")
-                question = f"heard: {latest}" + (f" · focus: {focus}" if focus else "")
+                question = f"heard: {' '.join(latest.split())}" + (f" · focus: {focus}" if focus else "")
 
             if jira_keys:
                 keys = {f"{m[1].upper()}-{m[2]}" for m in jira_keys.finditer(prompt)} - attached
