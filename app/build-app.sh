@@ -12,8 +12,11 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp .build/release/Companion "$app/Contents/MacOS/"
 cp Companion.icns "$app/Contents/Resources/"  # the menu bar's waveform symbol
-# Its own copy of companion, so the app doesn't need the repo. Rebuild to pick up changes to it.
+# Its own copy of companion and uv, so the app needs neither the repo nor anything installed.
+# Rebuild to pick up changes to companion.
 cp ../companion.py "$app/Contents/Resources/companion"
+cp start.sh "$app/Contents/Resources/"
+cp "$(command -v uv)" "$app/Contents/Resources/"
 # Built now, after its source so companion sees it's current, since it can't write into the signed app later
 cp ../system_audio.swift "$app/Contents/Resources/"
 swiftc -O ../system_audio.swift -o "$app/Contents/Resources/.system_audio"
@@ -28,8 +31,8 @@ cat > "$app/Contents/Info.plist" <<'EOF'
     <key>CFBundleExecutable</key><string>Companion</string>
     <key>CFBundleIconFile</key><string>Companion</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>0.2</string>
+    <key>CFBundleVersion</key><string>2</string>
     <key>LSMinimumSystemVersion</key><string>14.2</string>
     <key>LSUIElement</key><true/>
     <key>NSMicrophoneUsageDescription</key>

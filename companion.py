@@ -812,7 +812,7 @@ def main():
         transcript.parent.mkdir(parents=True, exist_ok=True)
         print(f"{DIM}recording transcript to {transcript}{RESET}")
 
-    print(f"{DIM}loading whisper…{RESET}")
+    print(f"{DIM}loading whisper… (the first time, it downloads ~1.6 GB){RESET}")
     listener = Listener(transcript, started)
     listener.about = about
     listener.ready.wait()

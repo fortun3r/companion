@@ -39,11 +39,11 @@ final class Engine {
         args.append(defaults.string(forKey: "scope") ?? Settings.defaultScope)
 
         let process = Process(), stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
-        // An interactive login shell, so PATH (uv, claude, gh) and a `companion` wrapper function in ~/.zshrc
-        // (e.g. one that sets the Jira env) work exactly as in the terminal. The app's own copy of companion
-        // goes first on PATH, after ~/.zshrc, so it's the one that runs, wrapper or not.
+        // An interactive login shell, so PATH (claude, gh) and a `companion` wrapper function in ~/.zshrc
+        // (e.g. one that sets the Jira env) work exactly as in the terminal. start.sh installs and signs in
+        // to Claude when needed, then runs the app's own copy of companion, wrapper or not.
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-lic", "export PATH=\"$COMPANION_APP_DIR:$PATH\"; companion \"$@\"", "zsh"] + args
+        process.arguments = ["-lic", ". \"$COMPANION_APP_DIR/start.sh\" \"$@\"", "zsh"] + args
         var env = ProcessInfo.processInfo.environment
         env["COMPANION_APP_DIR"] = Bundle.main.resourcePath
         env["DISABLE_AUTO_UPDATE"] = "true"  // oh-my-zsh's update prompt would read the command pipe
@@ -138,8 +138,7 @@ final class Engine {
 
     private func exited(_ code: Int32) {
         if code != 0 {
-            status = code == 127 ? "Couldn't run companion. Is uv installed and on your PATH?"
-                                 : (errors.last ?? "companion exited (\(code))")
+            status = errors.last ?? "companion exited (\(code))"
         } else if notesPath == nil {
             status = "Not listening"
         }
@@ -150,5 +149,13 @@ final class Engine {
 }
 
 enum Settings {
-    static let defaultScope = NSHomeDirectory() + "/dev"
+    /// ~/dev when there is one; otherwise an empty folder, so a Mac without code still starts, without
+    /// searching the whole home folder or macOS asking for access to Documents.
+    static let defaultScope: String = {
+        let dev = NSHomeDirectory() + "/dev"
+        if FileManager.default.fileExists(atPath: dev) { return dev }
+        let empty = NSHomeDirectory() + "/Library/Application Support/Companion"
+        try? FileManager.default.createDirectory(atPath: empty, withIntermediateDirectories: true)  // if it fails, companion says the folder isn't there
+        return empty
+    }()
 }
