@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds Companion.app next to this script.
+# Builds Companion.app into ~/Applications, so Spotlight and Login Items find it.
 # ponytail: ad-hoc signed, fine on this Mac. Each rebuild changes the signature, so macOS asks for
 # mic and system audio permission again; a Developer ID signature (and notarization) fixes that and
 # is what sharing the app needs.
@@ -7,7 +7,7 @@ set -eu
 cd "$(dirname "$0")"
 
 swift build -c release
-app=Companion.app
+app="$HOME/Applications/Companion.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS"
 cp .build/release/Companion "$app/Contents/MacOS/"
@@ -34,4 +34,4 @@ cat > "$app/Contents/Info.plist" <<'EOF'
 EOF
 
 codesign --force --sign - "$app"
-echo "built $PWD/$app"
+echo "built $app"
