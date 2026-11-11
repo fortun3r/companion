@@ -41,6 +41,7 @@ import sqlite3
 import subprocess
 import sys
 import textwrap
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -114,7 +115,8 @@ The code itself is the ground truth for how things work. For "how does X work", 
 
 Jira tickets mentioned in the transcript are attached below it when found. If a ticket has no local work (no commits, branches or sessions for it), say plainly that I haven't started it, then give what it asks, the open questions, and a likely approach based on how similar work was done in my repos.
 
-I'm reading this mid-conversation, so be fast: at most ~4 tool calls, and answer from the brief when it suffices. Write nothing before or between tool calls, only the final answer.
+I'm reading this mid-conversation, so be fast: at most ~4 tool calls, run independent searches in parallel in one turn, and answer from the brief when it suffices.
+Your very first output, before any tool call, is one line: `Q: <the question you're answering, max 15 words>`, or `Q: none, <what's being discussed>`, so I can check you picked the right one. After it, write nothing before or between tool calls, only the final answer.
 
 Format, in the language of the question. I glance at this while someone is waiting, so these are hard limits:
 - First line: the answer as I'd say it out loud, max 25 words. Plain text.
@@ -502,20 +504,39 @@ def ask(prompt, session_id, first, scope_text, dirs):
     proc = subprocess.Popen(cmd, cwd=HERE, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True)
     for line in proc.stdout:
         msg = json.loads(line)
+        if msg.get("type") == "assistant":  # a finished block, so the tool input is complete
+            for block in msg["message"]["content"]:
+                if block["type"] == "tool_use":
+                    printer.step(tool_summary(block["name"], block["input"]))
         if msg.get("type") != "stream_event":
             if msg.get("type") == "result" and msg.get("is_error"):
                 print(f"\n{BOLD}error:{RESET} {msg.get('result')}")
             continue
         event = msg["event"]
         if event["type"] == "content_block_start" and event["content_block"]["type"] == "tool_use":
-            printer.tool(event["content_block"]["name"])
+            printer.tool()
             answer = []  # only text after the last tool call is the answer
         elif event["type"] == "content_block_delta" and event["delta"]["type"] == "text_delta":
             printer.text(event["delta"]["text"])
             answer.append(event["delta"]["text"])
     proc.wait()
     printer.finish()
-    return "".join(answer).strip()
+    return re.sub(r"\AQ:.*\n*", "", "".join(answer).strip())  # the Q: line is a progress cue, not part of the answer
+
+
+def tool_summary(name, args):
+    """What a tool call is looking at, in a few words."""
+    if name == "Bash":
+        what = args.get("command", "")
+    elif name == "Grep":
+        what = f'grep "{args.get("pattern")}"' + (f" in {Path(args['path']).name}" if args.get("path") else "")
+    elif name == "Read":
+        what = f"read {Path(args.get('file_path', '')).name}"
+    elif name == "Glob":
+        what = f"find {args.get('pattern')}"
+    else:
+        what = name
+    return " ".join(what.replace(str(HOME), "~").split())
 
 
 class AnswerPrinter:
@@ -526,16 +547,24 @@ class AnswerPrinter:
     def __init__(self):
         self.buffer, self.searching, self.headline_done = "", False, False
         self.width = min(shutil.get_terminal_size().columns, 100) - 2
+        self.started = time.monotonic()
 
-    def tool(self, name):
-        self.buffer = ""  # an unfinished line before a tool call is narration ("Let me check…"), not the answer
-        print(f"{DIM}  searching" if not self.searching else f"{DIM}", end="")
-        print(f" · {name}{RESET}", end="", flush=True)
+    def elapsed(self):
+        return f"{time.monotonic() - self.started:3.0f}s"
+
+    def tool(self):
+        if self.buffer.startswith("Q:"):
+            self.line(self.buffer)
+        self.buffer = ""  # any other unfinished line before a tool call is narration ("Let me check…"), not the answer
+
+    def step(self, what):
+        line = f"  {self.elapsed()}  {what}"
+        print(f"{DIM}{line[:self.width - 1] + '…' if len(line) > self.width else line}{RESET}", flush=True)
         self.searching = True
 
     def text(self, delta):
         if self.searching:
-            print("\n")
+            print()
             self.searching = False
         self.buffer += delta
         while "\n" in self.buffer:
@@ -546,12 +575,15 @@ class AnswerPrinter:
         if self.buffer.strip():
             self.line(self.buffer)
         self.buffer = ""
-        print()
+        print(f"{DIM}  {self.elapsed()}{RESET}")
 
     def line(self, line):
         text = line.strip().replace("**", "")
         if not text:
             print()
+            return
+        if text.startswith("Q:") and not self.headline_done:
+            print(f"\033[3m{text}{RESET}", flush=True)
             return
         if text.startswith("#"):
             print(f"{BOLD}{text.lstrip('# ')}{RESET}")
@@ -755,7 +787,9 @@ def main():
                 question = f"asked: {cmd[1:].strip()}"
                 prompt = f"Typed question: {cmd[1:].strip()}"
             else:
+                print(f"{DIM}transcribing the last few seconds…{RESET}", end="", flush=True)
                 listener.flush()
+                print("\r\033[2K", end="")
                 if listener.received == 0:
                     print("no audio captured. Check the mic permission for this terminal app in System Settings › Privacy › Microphone.")
                     continue
@@ -774,12 +808,14 @@ def main():
 
             if jira_keys:
                 keys = {f"{m[1].upper()}-{m[2]}" for m in jira_keys.finditer(prompt)} - attached
+                if keys:
+                    print(f"{DIM}[jira {', '.join(sorted(keys))}]{RESET}", flush=True)
                 tickets = [t for key in sorted(keys) if (t := jira_ticket(key))]
                 attached |= keys
                 if tickets:
-                    print(f"{DIM}[jira {', '.join(sorted(keys))}]{RESET}")
                     prompt += "\n\nJira tickets mentioned:\n\n" + "\n\n".join(tickets)
 
+            print(f"{DIM}  asking claude…{RESET}", flush=True)
             answer = ask(prompt, session_id, first, scope_text, dirs)
             first = False
             log_exchange(notes, title, question, answer)
