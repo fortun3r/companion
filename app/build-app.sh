@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds Companion.app into ~/Applications, so Spotlight and Login Items find it.
+# Builds Companion.app into /Applications.
 # Signed with a "Companion Local Signing" certificate when the keychain has one (see README), so
 # macOS keeps the mic and system audio permissions across rebuilds. Without it, it's ad-hoc signed
 # and each rebuild asks again. Sharing the app would need a Developer ID signature and notarization.
@@ -7,7 +7,7 @@ set -eu
 cd "$(dirname "$0")"
 
 swift build -c release
-app="$HOME/Applications/Companion.app"
+app=/Applications/Companion.app
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp .build/release/Companion "$app/Contents/MacOS/"

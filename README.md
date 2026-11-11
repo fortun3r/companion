@@ -61,8 +61,8 @@ The full transcript is saved as it's heard next to the meeting notes, as `<date>
 `app/` is a menu bar app around the same companion: press ⌘Return from any app, even mid-call in Zoom or Meet, and the answer shows in a floating panel that doesn't take the keyboard. The menu sets the folder, what the meeting is about, and mic-only.
 
 ```bash
-app/build-app.sh                 # builds into ~/Applications; needs Xcode Command Line Tools
-open ~/Applications/Companion.app
+app/build-app.sh                 # builds into /Applications; needs Xcode Command Line Tools
+open /Applications/Companion.app
 ```
 
 It runs `companion` through your login shell, so install the CLI first as above; PATH and anything you wrap it with in `~/.zshrc` (like Jira env vars) work as in the terminal. macOS asks for microphone and system audio access for Companion itself. It's signed for your own Mac only.
