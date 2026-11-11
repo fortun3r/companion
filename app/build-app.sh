@@ -12,6 +12,11 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp .build/release/Companion "$app/Contents/MacOS/"
 cp Companion.icns "$app/Contents/Resources/"  # the menu bar's waveform symbol
+# Its own copy of companion, so the app doesn't need the repo. Rebuild to pick up changes to it.
+cp ../companion.py "$app/Contents/Resources/companion"
+# Built now, after its source so companion sees it's current, since it can't write into the signed app later
+cp ../system_audio.swift "$app/Contents/Resources/"
+swiftc -O ../system_audio.swift -o "$app/Contents/Resources/.system_audio"
 
 cat > "$app/Contents/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>

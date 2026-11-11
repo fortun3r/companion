@@ -40,10 +40,12 @@ final class Engine {
 
         let process = Process(), stdin = Pipe(), stdout = Pipe(), stderr = Pipe()
         // An interactive login shell, so PATH (uv, claude, gh) and a `companion` wrapper function in ~/.zshrc
-        // (e.g. one that sets the Jira env) work exactly as in the terminal.
+        // (e.g. one that sets the Jira env) work exactly as in the terminal. The app's own copy of companion
+        // goes first on PATH, after ~/.zshrc, so it's the one that runs, wrapper or not.
         process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-lic", "companion \"$@\"", "zsh"] + args
+        process.arguments = ["-lic", "export PATH=\"$COMPANION_APP_DIR:$PATH\"; companion \"$@\"", "zsh"] + args
         var env = ProcessInfo.processInfo.environment
+        env["COMPANION_APP_DIR"] = Bundle.main.resourcePath
         env["DISABLE_AUTO_UPDATE"] = "true"  // oh-my-zsh's update prompt would read the command pipe
         process.environment = env
         process.standardInput = stdin
@@ -136,7 +138,7 @@ final class Engine {
 
     private func exited(_ code: Int32) {
         if code != 0 {
-            status = code == 127 ? "`companion` not found in your shell. Install it as in the README."
+            status = code == 127 ? "Couldn't run companion. Is uv installed and on your PATH?"
                                  : (errors.last ?? "companion exited (\(code))")
         } else if notesPath == nil {
             status = "Not listening"
