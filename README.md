@@ -58,7 +58,7 @@ The full transcript is saved as it's heard next to the meeting notes, as `<date>
 
 ### Mac app
 
-`app/` is a menu bar app around the same companion: press ⌃⌥Space from any app, even mid-call in Zoom or Meet, and the answer shows in a floating panel that doesn't take the keyboard. The menu sets the folder, what the meeting is about, and mic-only.
+`app/` is a menu bar app around the same companion: press ⌘Return from any app, even mid-call in Zoom or Meet, and the answer shows in a floating panel that doesn't take the keyboard. The menu sets the folder, what the meeting is about, and mic-only.
 
 ```bash
 app/build-app.sh                 # needs Xcode Command Line Tools

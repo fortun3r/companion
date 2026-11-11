@@ -25,7 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel = makePanel()
         hotkey = Hotkey { [weak self] in self?.hotkeyPressed() }
         if hotkey?.registered == false {
-            engine.status = "⌃⌥Space is taken by another app; use the panel's field instead"
+            engine.status = "⌘Return is taken by another app; use the panel's field instead"
         }
     }
 
@@ -69,7 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// A global ⌃⌥Space. Carbon hot keys need no Accessibility permission, unlike event taps.
+/// A global ⌘Return. Carbon hot keys need no Accessibility permission, unlike event taps.
 final class Hotkey {
     private var ref: EventHotKeyRef?
     private let action: () -> Void
@@ -83,7 +83,7 @@ final class Hotkey {
             return noErr
         }, 1, &spec, Unmanaged.passUnretained(self).toOpaque(), nil)
         let id = EventHotKeyID(signature: OSType(0x434D_504E), id: 1)  // "CMPN"
-        registered = RegisterEventHotKey(UInt32(kVK_Space), UInt32(controlKey | optionKey), id,
+        registered = RegisterEventHotKey(UInt32(kVK_Return), UInt32(cmdKey), id,
                                          GetApplicationEventTarget(), 0, &ref) == noErr
     }
 }
@@ -126,7 +126,7 @@ struct MenuView: View {
             }
 
             Divider()
-            Text("⌃⌥Space answers the latest question").font(.caption).foregroundStyle(.secondary)
+            Text("⌘Return answers the latest question").font(.caption).foregroundStyle(.secondary)
             Button("Quit Companion") { NSApp.terminate(nil) }
         }
         .padding()
