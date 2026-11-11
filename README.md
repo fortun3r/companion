@@ -65,7 +65,9 @@ app/build-app.sh                 # builds into ~/Applications; needs Xcode Comma
 open ~/Applications/Companion.app
 ```
 
-It runs `companion` through your login shell, so install the CLI first as above; PATH and anything you wrap it with in `~/.zshrc` (like Jira env vars) work as in the terminal. macOS asks for microphone and system audio access for Companion itself. It's ad-hoc signed, so it's for your own Mac, and a rebuild asks for permission again.
+It runs `companion` through your login shell, so install the CLI first as above; PATH and anything you wrap it with in `~/.zshrc` (like Jira env vars) work as in the terminal. macOS asks for microphone and system audio access for Companion itself. It's signed for your own Mac only.
+
+To be asked only once, not after every rebuild, create a signing certificate before building: Keychain Access › Certificate Assistant › Create a Certificate…, name it `Companion Local Signing`, Identity Type: Self Signed Root, Certificate Type: Code Signing. The build script uses it when it's there; without it, the app is ad-hoc signed and every rebuild counts as a new app.
 
 ### Calls and headphones
 

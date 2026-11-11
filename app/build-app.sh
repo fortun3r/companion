@@ -1,8 +1,8 @@
 #!/bin/sh
 # Builds Companion.app into ~/Applications, so Spotlight and Login Items find it.
-# ponytail: ad-hoc signed, fine on this Mac. Each rebuild changes the signature, so macOS asks for
-# mic and system audio permission again; a Developer ID signature (and notarization) fixes that and
-# is what sharing the app needs.
+# Signed with a "Companion Local Signing" certificate when the keychain has one (see README), so
+# macOS keeps the mic and system audio permissions across rebuilds. Without it, it's ad-hoc signed
+# and each rebuild asks again. Sharing the app would need a Developer ID signature and notarization.
 set -eu
 cd "$(dirname "$0")"
 
@@ -33,5 +33,7 @@ cat > "$app/Contents/Info.plist" <<'EOF'
 </plist>
 EOF
 
-codesign --force --sign - "$app"
+identity=-
+security find-certificate -c "Companion Local Signing" >/dev/null 2>&1 && identity="Companion Local Signing"
+codesign --force --sign "$identity" "$app"
 echo "built $app"
