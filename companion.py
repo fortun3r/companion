@@ -16,6 +16,7 @@ transcripts, claude-mem (if installed), Jira and any brief in ~/.claude/briefs.
   text Enter   same as Enter, but focus the answer on "text"
   ? text       ask a typed question, no audio
   ! ...        select a screen area first and attach the screenshot, e.g. "!" or "! ? what's this error"
+  + ...        same, with the image on the clipboard (e.g. after ⌘⌃⇧4)
   q            quit (and write the meeting summary)
 
 Scope args set where it looks (default: current directory), including every repo
@@ -869,7 +870,7 @@ def main():
     elif listener.live:
         threading.Thread(target=show_live, args=(listener, idle, lock), daemon=True).start()
     with sd.InputStream(samplerate=RATE, channels=1, dtype="float32", blocksize=BLOCK, callback=listener.on_audio):
-        print(f"{BOLD}listening.{RESET} Enter = answer · '60' = last 60s · 'text' = focus · '? question' = typed · '!' = + screenshot · q = quit")
+        print(f"{BOLD}listening.{RESET} Enter = answer · '60' = last 60s · 'text' = focus · '? question' = typed · '!' = + screenshot · '+' = + clipboard image · q = quit")
         while True:
             if JSON:  # every time it waits for a command, so the app knows even when a command ends early
                 emit("ready")
@@ -887,13 +888,23 @@ def main():
                 break
 
             shot = None
-            if cmd.startswith("!"):
-                cmd = cmd[1:].strip()
+            if cmd[:1] in ("!", "+"):
+                kind, cmd = cmd[0], cmd[1:].strip()
                 shot = notes.with_name(f"{notes.stem}-shot-{datetime.now():%H%M%S}.png")
                 shot.parent.mkdir(parents=True, exist_ok=True)
-                subprocess.run(["screencapture", "-i", "-x", str(shot)])
-                if not shot.exists():  # Esc during the selection
-                    print("screenshot cancelled.")
+                if kind == "!":
+                    subprocess.run(["screencapture", "-i", "-x", str(shot)])
+                else:  # the clipboard, e.g. after ⌘⌃⇧4
+                    subprocess.run(["osascript", "-e", "on run argv",
+                                    "-e", "set f to open for access (POSIX file (item 1 of argv)) with write permission",
+                                    "-e", "try",
+                                    "-e", "write (the clipboard as «class PNGf») to f",
+                                    "-e", "end try",
+                                    "-e", "close access f",
+                                    "-e", "end run", str(shot)], capture_output=True)
+                if not shot.exists() or not shot.stat().st_size:  # Esc during the selection, or no image copied
+                    shot.unlink(missing_ok=True)
+                    print("screenshot cancelled." if kind == "!" else "no image on the clipboard.")
                     continue
 
             if cmd.startswith("?"):

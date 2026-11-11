@@ -37,6 +37,7 @@ The first run takes a few minutes: uv sets up Python and the dependencies (~150 
 | `60` + `Enter` | treat the last 60s, not 20s, as "the latest part" |
 | `? why did we drop redis` | ask a typed question, no audio |
 | `!` + any of the above | select a screen area first and attach the screenshot (`!`, `! ? what's this error`) |
+| `+` + any of the above | same, with the image on the clipboard, e.g. after ⌘⌃⇧4 |
 | `q` | quit, and write the meeting summary |
 
 Above the prompt, the last ~50 words heard update live, a second or two behind, so you can see when the question is finished before pressing Enter.
@@ -66,6 +67,14 @@ It needs [Claude Code](https://claude.com/product/claude-code) and a Claude acco
 1. Download `Companion.zip` from [Releases](https://github.com/fortun3r/companion/releases/latest), open it, and drag `Companion.app` to Applications.
 2. Open it. macOS refuses the first time, since the app isn't notarized: go to System Settings → Privacy & Security, scroll down, click **Open Anyway**, and confirm.
 3. Click the waveform in the menu bar → **Start listening**. The first time, it opens the Claude sign-in in your browser if you aren't signed in (and says so if Claude Code isn't installed), asks for microphone and system audio access, and takes a few minutes to download the speech model.
+
+To update, run this in Terminal instead of downloading in the browser. A browser download is quarantined, so macOS blocks every new version again until you click **Open Anyway**; a download from Terminal isn't:
+
+```bash
+osascript -e 'quit app "Companion"'; curl -fL https://github.com/fortun3r/companion/releases/latest/download/Companion.zip -o /tmp/Companion.zip && rm -rf /Applications/Companion.app && ditto -x -k /tmp/Companion.zip /Applications && open /Applications/Companion.app
+```
+
+Already replaced it from a browser download? `xattr -dr com.apple.quarantine /Applications/Companion.app` lets it open.
 
 Or build it yourself:
 

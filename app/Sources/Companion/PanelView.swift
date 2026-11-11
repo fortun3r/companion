@@ -45,7 +45,7 @@ struct PanelView: View {
             }
             if engine.running {
                 HStack(spacing: 6) {
-                    TextField("Enter: latest question · 60 · focus text · ? typed · ! screenshot", text: $input)
+                    TextField("Enter: latest question · 60 · focus text · ? typed · ! screenshot · + clipboard", text: $input)
                         .onSubmit {
                             engine.send(input)
                             input = ""
@@ -59,6 +59,14 @@ struct PanelView: View {
                     }
                     .buttonStyle(.borderless)
                     .help("Select a screen area and ask with the screenshot")
+                    Button {
+                        engine.send("+" + input)
+                        input = ""
+                    } label: {
+                        Image(systemName: "doc.on.clipboard")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Ask with the image on the clipboard, e.g. after ⌘⌃⇧4")
                 }
                 .disabled(!engine.ready || engine.busy)
             } else {
