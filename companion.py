@@ -56,7 +56,9 @@ os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 # Once the model is cached, skip the Hub's update check (and its unauthenticated-request warning).
 # Must be set before huggingface_hub is imported.
 _hf_cache = Path(os.environ.get("HF_HUB_CACHE") or Path(os.environ.get("HF_HOME", Path.home() / ".cache/huggingface")) / "hub")
-if (_hf_cache / f"models--{WHISPER.replace('/', '--')}" / "snapshots").is_dir():
+_whisper_dir = _hf_cache / f"models--{WHISPER.replace('/', '--')}"
+_whisper_cached = (_whisper_dir / "snapshots").is_dir()
+if _whisper_cached:
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
 import mlx_whisper
 import numpy as np
@@ -93,6 +95,39 @@ def emit(kind, **fields):
     with _emit_lock:
         sys.__stdout__.write(json.dumps({"type": kind, **fields}) + "\n")
         sys.__stdout__.flush()
+
+
+def download_whisper():
+    """First run: fetch the model up front, not inside mlx_whisper, to show how far along it is. Progress is
+    what has landed on disk, since the Hub only draws progress bars on a terminal."""
+    from huggingface_hub import HfApi, snapshot_download
+    total = sum(f.size or 0 for f in HfApi().model_info(WHISPER, files_metadata=True).siblings)
+    dirs = [_whisper_dir, _hf_cache.parent / "xet"]  # finished files, and xet's chunks as they arrive
+
+    def size():
+        n = 0
+        for d in dirs:
+            for f in d.rglob("*"):
+                try:
+                    n += f.stat().st_size if f.is_file() and not f.is_symlink() else 0
+                except FileNotFoundError:  # moved into place mid-scan
+                    pass
+        return n
+
+    start, done = size(), threading.Event()
+
+    def report():
+        while not done.wait(1):
+            got = min(size() - start, total)
+            print(f"{DIM}downloading the speech model, first time only: {got / 1e6:,.0f} of {total / 1e6:,.0f} MB{RESET}",
+                  end="\r", flush=True)
+
+    threading.Thread(target=report, daemon=True).start()
+    try:
+        snapshot_download(WHISPER)
+    finally:
+        done.set()
+    print()
 
 
 class StatusLines:
@@ -812,7 +847,9 @@ def main():
         transcript.parent.mkdir(parents=True, exist_ok=True)
         print(f"{DIM}recording transcript to {transcript}{RESET}")
 
-    print(f"{DIM}loading whisper… (the first time, it downloads ~1.6 GB){RESET}")
+    if not _whisper_cached:
+        download_whisper()
+    print(f"{DIM}loading whisper…{RESET}")
     listener = Listener(transcript, started)
     listener.about = about
     listener.ready.wait()
@@ -865,7 +902,7 @@ def main():
                 focus = "" if cmd.isdigit() else cmd
                 prompt, latest = conversation_prompt(listener, sent_upto, seconds, focus)
                 if not prompt:
-                    print("nothing heard yet.")
+                    print("nothing heard yet." if first else "nothing new heard since the last question.")
                     continue
                 sent_upto = listener.now()
                 print(f"{DIM}heard: {latest}{RESET}\n")

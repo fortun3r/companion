@@ -29,6 +29,8 @@ final class Engine {
     private var process: Process?
     private var input: FileHandle?
     private var errors: [String] = []
+    private var setup = (started: 0, done: 0)
+    private var asked = false  // a command was sent and its answer hasn't started yet
 
     func start() {
         guard !running else { return }
@@ -55,7 +57,7 @@ final class Engine {
             Task { @MainActor in self.exited(finished.terminationStatus) }
         }
 
-        captions = []; question = ""; steps = []; answer = []; errors = []
+        captions = []; question = ""; steps = []; answer = []; errors = []; setup = (0, 0)
         status = "Starting…"
         do {
             try process.run()
@@ -68,7 +70,24 @@ final class Engine {
         running = true
 
         readLines(stdout) { self.handle($0) }
-        readLines(stderr) { self.errors = Array((self.errors + [$0]).suffix(5)) }
+        readLines(stderr) {
+            self.errors = Array((self.errors + [$0]).suffix(5))
+            self.setupProgress($0)
+        }
+    }
+
+    /// The first start, before companion runs, uv downloads Python and its packages (~300 MB): it prints
+    /// a line as each download starts and another as it finishes.
+    private func setupProgress(_ line: String) {
+        let line = line.trimmingCharacters(in: .whitespaces)
+        if line.hasPrefix("Downloading ") {
+            setup.started += 1
+        } else if line.hasPrefix("Downloaded ") {
+            setup.done += 1
+        } else {
+            return
+        }
+        status = "Setting up, first time only: downloaded \(setup.done) of \(setup.started)…"
     }
 
     /// `FileHandle.bytes.lines` holds small pipe writes back until its buffer fills, which stalls the
@@ -96,7 +115,7 @@ final class Engine {
     /// Same syntax as the terminal: "" answers the latest question, "60", focus text, "? typed question".
     func send(_ command: String) {
         guard ready, !busy, let input else { return }
-        question = ""; steps = []; answer = []
+        asked = true  // the last answer stays until the next one starts, in case nothing new was heard
         busy = true
         input.write(Data((command + "\n").utf8))
     }
@@ -113,9 +132,14 @@ final class Engine {
     private func handle(_ line: String) {
         // Shell startup noise from ~/.zshrc isn't JSON; skip it
         guard let event = try? JSONDecoder().decode(Event.self, from: Data(line.utf8)) else { return }
+        if asked, ["question", "step", "line"].contains(event.type) {
+            question = ""; steps = []; answer = []
+            asked = false
+        }
         switch event.type {
         case "ready":  // sent each time companion waits for a command, also after "nothing heard yet"
             ready = true
+            asked = false
             busy = false
         case "captions":
             captions = event.turns ?? []
