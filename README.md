@@ -56,6 +56,17 @@ Follow-up questions keep the context from earlier ones. Most audio is already tr
 
 The full transcript is saved as it's heard next to the meeting notes, as `<date>-<time>-<scope>-transcript.md`, one line per turn with the time and `[me]`/`[them]`. The summary on quit covers the whole meeting, not just the parts around your questions. Pass `--no-record` to keep the transcript in memory only.
 
+### Mac app
+
+`app/` is a menu bar app around the same companion: press ⌃⌥Space from any app, even mid-call in Zoom or Meet, and the answer shows in a floating panel that doesn't take the keyboard. The menu sets the folder, what the meeting is about, and mic-only.
+
+```bash
+app/build-app.sh                 # needs Xcode Command Line Tools
+open app/Companion.app
+```
+
+It runs `companion` through your login shell, so install the CLI first as above; PATH and anything you wrap it with in `~/.zshrc` (like Jira env vars) work as in the terminal. macOS asks for microphone and system audio access for Companion itself. It's ad-hoc signed, so it's for your own Mac, and a rebuild asks for permission again.
+
 ### Calls and headphones
 
 It hears the mic and everything the Mac plays, so the other person on a call is captured even on headphones, with no virtual audio driver and no output settings to change. The first run compiles a small helper (`system_audio.swift`, a Core Audio process tap), and startup shows `hearing: mic + system audio`.
