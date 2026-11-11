@@ -20,7 +20,11 @@ struct PanelView: View {
                     }
                     let headline = engine.answer.firstIndex { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
                     ForEach(Array(engine.answer.enumerated()), id: \.offset) { i, line in
-                        render(line).bold(i == headline)
+                        if line.trimmingCharacters(in: .whitespaces).isEmpty {
+                            Color.clear.frame(height: 4)  // a paragraph break, not a full empty line
+                        } else {
+                            render(line).bold(i == headline)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
