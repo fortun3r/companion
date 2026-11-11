@@ -60,11 +60,11 @@ The full transcript is saved as it's heard next to the meeting notes, as `<date>
 
 `app/` is a menu bar app around the same companion: press ⌘Return from any app, even mid-call in Zoom or Meet, and the answer shows in a floating panel that doesn't take the keyboard. The menu sets the folder, what the meeting is about, and mic-only.
 
-It needs nothing installed, only a Claude account (Pro or Max plan). To get it without building:
+It needs [Claude Code](https://claude.com/product/claude-code) and a Claude account (Pro or Max plan); it carries everything else. To get it without building:
 
 1. Download `Companion.zip` from [Releases](https://github.com/fortun3r/companion/releases/latest), open it, and drag `Companion.app` to Applications.
 2. Open it. macOS refuses the first time, since the app isn't notarized: go to System Settings → Privacy & Security, scroll down, click **Open Anyway**, and confirm.
-3. Click the waveform in the menu bar → **Start listening**. The first time, it installs Claude and opens the Claude sign-in in your browser, asks for microphone and system audio access, and takes a few minutes to download the speech model.
+3. Click the waveform in the menu bar → **Start listening**. The first time, it opens the Claude sign-in in your browser if you aren't signed in (and says so if Claude Code isn't installed), asks for microphone and system audio access, and takes a few minutes to download the speech model.
 
 Or build it yourself:
 
@@ -73,7 +73,7 @@ app/build-app.sh                 # builds into /Applications; needs Xcode Comman
 open /Applications/Companion.app
 ```
 
-The app carries its own copy of `companion.py`, so it doesn't need the repo once built; rebuild to pick up changes. It also carries uv, and installs and signs in to Claude Code when they're missing. It runs through your login shell, so PATH (claude, gh) and anything you wrap `companion` with in `~/.zshrc` (like Jira env vars) work as in the terminal. macOS asks for microphone and system audio access for Companion itself. It's signed for your own Mac only.
+The app carries its own copy of `companion.py`, so it doesn't need the repo once built; rebuild to pick up changes. It also carries uv, and signs in to Claude Code when needed. It runs through your login shell, so PATH (claude, gh) and anything you wrap `companion` with in `~/.zshrc` (like Jira env vars) work as in the terminal. macOS asks for microphone and system audio access for Companion itself. It's signed for your own Mac only.
 
 To be asked only once, not after every rebuild, add a self-signed code signing certificate to your login keychain before building. The build script uses it when it's there; without it, the app is ad-hoc signed and every rebuild counts as a new app.
 

@@ -1,14 +1,13 @@
 # Sourced by the app inside the login shell, so a `companion` wrapper in ~/.zshrc still applies.
-# Gets what's missing first, saying so in the panel, so the app works on a Mac with nothing installed.
+# Says in the panel when Claude Code is missing, and signs in to Claude when needed.
 status() { printf '{"type": "status", "text": "%s"}\n' "$1"; }
 
 # The app's own companion and uv first; ~/.local/bin is where Claude Code's installer puts claude
 export PATH="$COMPANION_APP_DIR:$HOME/.local/bin:$PATH"
 
 if ! command -v claude >/dev/null; then
-  status "Installing Claude, which Companion uses to answer…"
-  curl -fsSL https://claude.ai/install.sh | bash >&2 ||
-    { echo "Couldn't install Claude. Check the internet connection and press Start listening again." >&2; exit 1; }
+  echo "Companion needs Claude Code to answer, and it isn't installed. Install it from claude.com/product/claude-code, then press Start listening again." >&2
+  exit 1
 fi
 
 if ! claude auth status >/dev/null 2>&1; then
