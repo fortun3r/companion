@@ -27,6 +27,7 @@ nested inside. Each is a path, or a folder name under $COMPANION_ROOT (default ~
                            what the meeting is about: sharper answers, better spelled names
   companion . --no-record  don't save the full transcript next to the meeting notes
   companion . --mic-only   don't capture what the Mac plays (calls, videos, music)
+  companion . --json       for the app: same commands on stdin, one JSON event per line on stdout
 """
 
 import base64
@@ -83,6 +84,32 @@ JIRA_JQL = os.environ.get("COMPANION_JIRA_JQL", "sprint in openSprints() AND sta
 JIRA_AUTH = base64.b64encode(f"{os.environ.get('JIRA_EMAIL')}:{os.environ.get('JIRA_API_TOKEN')}".encode()).decode()
 
 DIM, BOLD, RESET = "\033[2m", "\033[1m", "\033[0m"
+JSON = "--json" in sys.argv
+_emit_lock = threading.Lock()
+
+
+def emit(kind, **fields):
+    """--json mode: one event per line on the real stdout (captions run on their own thread)."""
+    with _emit_lock:
+        sys.__stdout__.write(json.dumps({"type": kind, **fields}) + "\n")
+        sys.__stdout__.flush()
+
+
+class StatusLines:
+    """--json mode stands this in for stdout, so every existing print becomes a status event, unstyled."""
+
+    def __init__(self):
+        self.buffer = ""
+
+    def write(self, s):
+        *lines, self.buffer = re.split(r"[\r\n]", self.buffer + s)
+        for line in lines:
+            if text := re.sub(r"\033\[[0-9;]*[A-Za-z]", "", line).strip():
+                emit("status", text=text)
+        return len(s)
+
+    def flush(self):
+        pass
 
 
 def git_identity():
@@ -500,7 +527,7 @@ def ask(prompt, session_id, first, scope_text, dirs):
     ]
     cmd += ["--session-id", session_id] if first else ["--resume", session_id]
 
-    answer, printer = [], AnswerPrinter()
+    answer, printer = [], JsonPrinter() if JSON else AnswerPrinter()
     proc = subprocess.Popen(cmd, cwd=HERE, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True)
     for line in proc.stdout:
         msg = json.loads(line)
@@ -609,6 +636,27 @@ class AnswerPrinter:
         print(f"{style}{wrapped}{RESET}", flush=True)
 
 
+class JsonPrinter(AnswerPrinter):
+    """--json mode: the question, steps and raw markdown answer lines as events, for the app to render."""
+
+    def step(self, what):
+        emit("step", text=what, seconds=round(time.monotonic() - self.started))
+
+    def line(self, line):
+        text = line.strip().replace("**", "")
+        if text.startswith("Q:") and not self.headline_done:
+            emit("question", text=text[2:].strip())
+            return
+        self.headline_done = self.headline_done or bool(text)
+        emit("line", text=line)
+
+    def finish(self):
+        if self.buffer.strip():
+            self.line(self.buffer)
+        self.buffer = ""
+        emit("done", seconds=round(time.monotonic() - self.started))
+
+
 def log_exchange(notes, title, question, answer):
     """Append as we go, so a crash or Ctrl+C loses nothing."""
     notes.parent.mkdir(parents=True, exist_ok=True)
@@ -698,6 +746,17 @@ def show_live(listener, idle, lock):
         threading.Event().wait(0.5)
 
 
+def emit_captions(listener):
+    shown = None
+    while True:
+        turns = [{"speaker": label, "settled": " ".join(settled), "tentative": " ".join(tentative)}
+                 for label, settled, tentative in listener.caption_turns()]
+        if turns != shown:
+            emit("captions", turns=turns)
+            shown = turns
+        threading.Event().wait(0.5)
+
+
 def conversation_prompt(listener, sent_upto, seconds, focus):
     """Split the transcript into what's new since the last question and the latest `seconds`."""
     now = listener.now()
@@ -728,9 +787,11 @@ def main():
         del sys.argv[i:i + 2]
     record = "--no-record" not in sys.argv  # --record is the default, still accepted
     mic_only = "--mic-only" in sys.argv
-    args = [a for a in sys.argv[1:] if a not in ("--record", "--no-record", "--mic-only")]
+    args = [a for a in sys.argv[1:] if a not in ("--record", "--no-record", "--mic-only", "--json")]
     if unknown := [a for a in args if a.startswith("-")]:
         sys.exit(f"unknown option: {' '.join(unknown)} (see companion --help)")
+    if JSON:
+        sys.stdout = StatusLines()
     scope_text, dirs = scope_context([resolve(a) for a in args] or [Path.cwd()])
     if about:
         scope_text += f"\n\nWhat this meeting is about, in my words: {about}"
@@ -763,18 +824,22 @@ def main():
     session_id = str(uuid.uuid4())
     first = True
     sent_upto = 0.0  # audio second up to which the conversation has been sent to Claude
-    listener.live = sys.stdout.isatty()
+    listener.live = JSON or sys.stdout.isatty()
     idle, lock = threading.Event(), threading.Lock()
-    if listener.live:
+    if JSON:
+        threading.Thread(target=emit_captions, args=(listener,), daemon=True).start()
+    elif listener.live:
         threading.Thread(target=show_live, args=(listener, idle, lock), daemon=True).start()
     with sd.InputStream(samplerate=RATE, channels=1, dtype="float32", blocksize=BLOCK, callback=listener.on_audio):
+        if JSON:
+            emit("ready")
         print(f"{BOLD}listening.{RESET} Enter = answer · '60' = last 60s · 'text' = focus · '? question' = typed · q = quit")
         while True:
-            if listener.live:
+            if listener.live and not JSON:
                 print("\n".join(live_lines(listener)))
                 idle.set()
             try:
-                cmd = input("> ").strip()
+                cmd = input("" if JSON else "> ").strip()
             except (EOFError, KeyboardInterrupt):
                 break
             finally:
