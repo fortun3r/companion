@@ -67,7 +67,30 @@ open /Applications/Companion.app
 
 It runs `companion` through your login shell, so install the CLI first as above; PATH and anything you wrap it with in `~/.zshrc` (like Jira env vars) work as in the terminal. macOS asks for microphone and system audio access for Companion itself. It's signed for your own Mac only.
 
-To be asked only once, not after every rebuild, create a signing certificate before building: Keychain Access › Certificate Assistant › Create a Certificate…, name it `Companion Local Signing`, Identity Type: Self Signed Root, Certificate Type: Code Signing. The build script uses it when it's there; without it, the app is ad-hoc signed and every rebuild counts as a new app.
+To be asked only once, not after every rebuild, add a self-signed code signing certificate to your login keychain before building. The build script uses it when it's there; without it, the app is ad-hoc signed and every rebuild counts as a new app.
+
+```bash
+cd "$(mktemp -d)"
+cat > cert.cnf <<'EOF'
+[req]
+distinguished_name = dn
+x509_extensions = ext
+prompt = no
+[dn]
+CN = Companion Local Signing
+[ext]
+basicConstraints = critical,CA:false
+keyUsage = critical,digitalSignature
+extendedKeyUsage = critical,codeSigning
+EOF
+openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -config cert.cnf -keyout key.pem -out cert.pem
+# macOS only imports .p12 files with the older SHA1/3DES encryption
+openssl pkcs12 -export -inkey key.pem -in cert.pem -name "Companion Local Signing" -out companion.p12 \
+  -passout pass:companion -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg sha1
+security import companion.p12 -k ~/Library/Keychains/login.keychain-db -P companion -T /usr/bin/codesign
+rm key.pem cert.pem companion.p12
+security find-identity -p codesigning   # lists "Companion Local Signing" (not trusted is fine)
+```
 
 ### Calls and headphones
 
