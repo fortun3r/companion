@@ -9,8 +9,9 @@ cd "$(dirname "$0")"
 swift build -c release
 app="$HOME/Applications/Companion.app"
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp .build/release/Companion "$app/Contents/MacOS/"
+cp Companion.icns "$app/Contents/Resources/"  # the menu bar's waveform symbol
 
 cat > "$app/Contents/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -20,6 +21,7 @@ cat > "$app/Contents/Info.plist" <<'EOF'
     <key>CFBundleIdentifier</key><string>io.github.fortun3r.companion</string>
     <key>CFBundleName</key><string>Companion</string>
     <key>CFBundleExecutable</key><string>Companion</string>
+    <key>CFBundleIconFile</key><string>Companion</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1</string>
     <key>CFBundleVersion</key><string>1</string>
