@@ -60,6 +60,15 @@ The full transcript is saved as it's heard next to the meeting notes, as `<date>
 
 `app/` is a menu bar app around the same companion: press ⌘Return from any app, even mid-call in Zoom or Meet, and the answer shows in a floating panel that doesn't take the keyboard. The menu sets the folder, what the meeting is about, and mic-only.
 
+To skip building it, download `Companion.zip` from [Releases](https://github.com/fortun3r/companion/releases/latest), move `Companion.app` to /Applications, and clear the quarantine flag (it isn't notarized, so macOS won't open it otherwise):
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Companion.app
+open /Applications/Companion.app
+```
+
+Or build it yourself:
+
 ```bash
 app/build-app.sh                 # builds into /Applications; needs Xcode Command Line Tools
 open /Applications/Companion.app
