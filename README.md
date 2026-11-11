@@ -36,6 +36,7 @@ The first run takes a few minutes: uv sets up Python and the dependencies (~150 
 | `the pagination part` + `Enter` | same, but focused on that |
 | `60` + `Enter` | treat the last 60s, not 20s, as "the latest part" |
 | `? why did we drop redis` | ask a typed question, no audio |
+| `!` + any of the above | select a screen area first and attach the screenshot (`!`, `! ? what's this error`) |
 | `q` | quit, and write the meeting summary |
 
 Above the prompt, the last ~50 words heard update live, a second or two behind, so you can see when the question is finished before pressing Enter.

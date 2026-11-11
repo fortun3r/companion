@@ -15,6 +15,7 @@ transcripts, claude-mem (if installed), Jira and any brief in ~/.claude/briefs.
   60 Enter     treat the last 60 seconds as the latest part
   text Enter   same as Enter, but focus the answer on "text"
   ? text       ask a typed question, no audio
+  ! ...        select a screen area first and attach the screenshot, e.g. "!" or "! ? what's this error"
   q            quit (and write the meeting summary)
 
 Scope args set where it looks (default: current directory), including every repo
@@ -868,7 +869,7 @@ def main():
     elif listener.live:
         threading.Thread(target=show_live, args=(listener, idle, lock), daemon=True).start()
     with sd.InputStream(samplerate=RATE, channels=1, dtype="float32", blocksize=BLOCK, callback=listener.on_audio):
-        print(f"{BOLD}listening.{RESET} Enter = answer · '60' = last 60s · 'text' = focus · '? question' = typed · q = quit")
+        print(f"{BOLD}listening.{RESET} Enter = answer · '60' = last 60s · 'text' = focus · '? question' = typed · '!' = + screenshot · q = quit")
         while True:
             if JSON:  # every time it waits for a command, so the app knows even when a command ends early
                 emit("ready")
@@ -884,6 +885,16 @@ def main():
                     idle.clear()
             if cmd == "q":
                 break
+
+            shot = None
+            if cmd.startswith("!"):
+                cmd = cmd[1:].strip()
+                shot = notes.with_name(f"{notes.stem}-shot-{datetime.now():%H%M%S}.png")
+                shot.parent.mkdir(parents=True, exist_ok=True)
+                subprocess.run(["screencapture", "-i", "-x", str(shot)])
+                if not shot.exists():  # Esc during the selection
+                    print("screenshot cancelled.")
+                    continue
 
             if cmd.startswith("?"):
                 question = f"asked: {cmd[1:].strip()}"
@@ -901,12 +912,19 @@ def main():
                 seconds = int(cmd) if cmd.isdigit() else WINDOW
                 focus = "" if cmd.isdigit() else cmd
                 prompt, latest = conversation_prompt(listener, sent_upto, seconds, focus)
-                if not prompt:
+                if prompt:
+                    sent_upto = listener.now()
+                    print(f"{DIM}heard: {latest}{RESET}\n")
+                    question = f"heard: {' '.join(latest.split())}" + (f" · focus: {focus}" if focus else "")
+                elif shot:  # the screenshot alone is the question
+                    prompt, question = (f"Focus: {focus}" if focus else ""), "screenshot" + (f" · focus: {focus}" if focus else "")
+                else:
                     print("nothing heard yet." if first else "nothing new heard since the last question.")
                     continue
-                sent_upto = listener.now()
-                print(f"{DIM}heard: {latest}{RESET}\n")
-                question = f"heard: {' '.join(latest.split())}" + (f" · focus: {focus}" if focus else "")
+
+            if shot:
+                prompt += f"\n\nScreenshot of my screen, read it first: {shot}"
+                question += f" · [screenshot]({shot.name})"
 
             if jira_keys:
                 keys = {f"{m[1].upper()}-{m[2]}" for m in jira_keys.finditer(prompt)} - attached

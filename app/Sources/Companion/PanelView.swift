@@ -44,12 +44,23 @@ struct PanelView: View {
                 Text(engine.status).font(.caption).foregroundStyle(.secondary).lineLimit(2)
             }
             if engine.running {
-                TextField("Enter: latest question · 60 · focus text · ? typed question", text: $input)
-                    .onSubmit {
-                        engine.send(input)
+                HStack(spacing: 6) {
+                    TextField("Enter: latest question · 60 · focus text · ? typed · ! screenshot", text: $input)
+                        .onSubmit {
+                            engine.send(input)
+                            input = ""
+                        }
+                    // Same as typing "!" before the command: select a screen area, then ask with what's typed
+                    Button {
+                        engine.send("!" + input)
                         input = ""
+                    } label: {
+                        Image(systemName: "camera.viewfinder")
                     }
-                    .disabled(!engine.ready || engine.busy)
+                    .buttonStyle(.borderless)
+                    .help("Select a screen area and ask with the screenshot")
+                }
+                .disabled(!engine.ready || engine.busy)
             } else {
                 Button("Start listening") { engine.start() }
             }
