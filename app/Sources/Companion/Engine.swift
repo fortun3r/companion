@@ -112,8 +112,9 @@ final class Engine {
         // Shell startup noise from ~/.zshrc isn't JSON; skip it
         guard let event = try? JSONDecoder().decode(Event.self, from: Data(line.utf8)) else { return }
         switch event.type {
-        case "ready":
+        case "ready":  // sent each time companion waits for a command, also after "nothing heard yet"
             ready = true
+            busy = false
         case "captions":
             captions = event.turns ?? []
         case "status":
@@ -127,7 +128,6 @@ final class Engine {
         case "line":
             answer.append(event.text ?? "")
         case "done":
-            busy = false
             status = "answered in \(event.seconds ?? 0)s"
         default:
             break

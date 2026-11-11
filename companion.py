@@ -831,10 +831,10 @@ def main():
     elif listener.live:
         threading.Thread(target=show_live, args=(listener, idle, lock), daemon=True).start()
     with sd.InputStream(samplerate=RATE, channels=1, dtype="float32", blocksize=BLOCK, callback=listener.on_audio):
-        if JSON:
-            emit("ready")
         print(f"{BOLD}listening.{RESET} Enter = answer · '60' = last 60s · 'text' = focus · '? question' = typed · q = quit")
         while True:
+            if JSON:  # every time it waits for a command, so the app knows even when a command ends early
+                emit("ready")
             if listener.live and not JSON:
                 print("\n".join(live_lines(listener)))
                 idle.set()
