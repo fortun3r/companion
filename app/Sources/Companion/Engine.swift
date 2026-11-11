@@ -132,7 +132,8 @@ final class Engine {
     private func handle(_ line: String) {
         // Shell startup noise from ~/.zshrc isn't JSON; skip it
         guard let event = try? JSONDecoder().decode(Event.self, from: Data(line.utf8)) else { return }
-        if asked, ["question", "step", "line"].contains(event.type) {
+        // The new answer has started once companion asks Claude, which it only does when it heard something new
+        if asked, event.text?.hasPrefix("asking claude") == true || ["question", "step", "line"].contains(event.type) {
             question = ""; steps = []; answer = []
             asked = false
         }

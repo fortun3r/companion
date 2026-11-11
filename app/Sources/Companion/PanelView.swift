@@ -39,7 +39,10 @@ struct PanelView: View {
             }
             .defaultScrollAnchor(.bottom)
 
-            Text(engine.status).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            HStack(spacing: 6) {
+                if engine.busy { ProgressView().controlSize(.small) }  // so a slow answer doesn't look frozen
+                Text(engine.status).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            }
             if engine.running {
                 TextField("Enter: latest question · 60 · focus text · ? typed question", text: $input)
                     .onSubmit {
