@@ -68,6 +68,15 @@ It needs [Claude Code](https://claude.com/product/claude-code) and a Claude acco
 2. Open it. macOS refuses the first time, since the app isn't notarized: go to System Settings → Privacy & Security, scroll down, click **Open Anyway**, and confirm.
 3. Click the waveform in the menu bar → **Start listening**. The first time, it opens the Claude sign-in in your browser if you aren't signed in (and says so if Claude Code isn't installed), asks for microphone and system audio access, and takes a few minutes to download the speech model.
 
+The panel shows the live captions at the top, and below them the latest answer in a card:
+
+<img src="https://github.com/user-attachments/assets/d8797ade-0cc2-4cd5-ab51-93c6fbf99adc" alt="The Companion panel: live captions, an answer card with copy buttons and folded steps, and the input row" width="460">
+
+- The card's header is what Claude was asked, with a button that copies the whole answer. Each code block has its own copy button.
+- While Claude works, its steps (files read, searches) appear live. When the answer starts, they fold into a "3 steps" line you can expand.
+- The field at the bottom takes the same input as the terminal: Enter alone answers the latest question, `60` widens the window, any text sets the focus, `? …` asks a typed question. Hover the `?` icon for the list. The camera button attaches a screenshot of a screen area you select, and the clipboard button attaches the copied image.
+- You can type the next question while an answer is still coming in. Enter does nothing until the answer finishes, and what you typed stays in the field.
+
 To update, run this in Terminal instead of downloading in the browser. A browser download is quarantined, so macOS blocks every new version again until you click **Open Anyway**; a download from Terminal isn't:
 
 ```bash
@@ -79,9 +88,11 @@ Already replaced it from a browser download? `xattr -dr com.apple.quarantine /Ap
 Or build it yourself:
 
 ```bash
-app/build-app.sh                 # builds into /Applications; needs Xcode Command Line Tools
+app/build-app.sh                 # builds into /Applications; needs Xcode
 open /Applications/Companion.app
 ```
+
+Recent macOS SDKs implement SwiftUI's `@State` as a macro, and its plugin ships only with Xcode. If the build fails with `plugin for module 'SwiftUIMacros' not found`, point the toolchain at Xcode: `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`.
 
 The app carries its own copy of `companion.py`, so it doesn't need the repo once built; rebuild to pick up changes. It also carries uv, and signs in to Claude Code when needed. It runs through your login shell, so PATH (claude, gh) and anything you wrap `companion` with in `~/.zshrc` (like Jira env vars) work as in the terminal. macOS asks for microphone and system audio access for Companion itself. It's signed for your own Mac only.
 
